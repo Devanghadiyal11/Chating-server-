@@ -642,14 +642,14 @@
         <div class="section-title">Burp Intercept Mode</div>
         <div class="mode-card">
           <label class="mode-label">
-            <input type="radio" name="protocol" value="ws" checked onchange="updateProtocolMode()">
-            <span>WebSocket</span>
-            <span class="mode-tag tag-ws">WS Tab</span>
-          </label>
-          <label class="mode-label">
-            <input type="radio" name="protocol" value="http" onchange="updateProtocolMode()">
+            <input type="radio" name="protocol" value="http" checked onchange="updateProtocolMode()">
             <span>HTTP POST</span>
             <span class="mode-tag tag-http">HTTP Proxy</span>
+          </label>
+          <label class="mode-label">
+            <input type="radio" name="protocol" value="ws" onchange="updateProtocolMode()">
+            <span>WebSocket</span>
+            <span class="mode-tag tag-ws">WS Tab</span>
           </label>
         </div>
       </div>
@@ -696,8 +696,8 @@
         <span id="headerRoomTitle"># Private Room</span>
         <span class="pin-pill" id="headerPinPill">PIN: ----</span>
       </div>
-      <div class="active-protocol-badge proto-ws" id="activeProtoBadge">
-        <span>●</span> WebSocket Active
+      <div class="active-protocol-badge proto-http" id="activeProtoBadge">
+        <span>●</span> HTTP POST Active
       </div>
     </header>
 
@@ -711,7 +711,7 @@
     <!-- Chat Input Area -->
     <div class="chat-bottom">
       <div class="payload-preview">
-        <span>Target: <b class="method-tag" id="previewMethod">WS /ws/{pin}/{user}</b></span>
+        <span>Target: <b class="method-tag" id="previewMethod" style="color:#ff6633;">POST /api/rooms/{pin}/send</b></span>
         <span>Payload: <code id="previewJson">{"sender": "...", "content": "..."}</code></span>
       </div>
 
