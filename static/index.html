@@ -915,6 +915,7 @@
 
     connectWebSocket();
     loadPastMessages();
+    loadRoomUsers();
   }
 
   function connectWebSocket() {
@@ -1162,7 +1163,8 @@
   async function loadPastMessages() {
     if (!currentPin) return;
     try {
-      const r = await fetch(`/api/rooms/${encodeURIComponent(currentPin)}/messages`);
+      const url = `/api/rooms/${encodeURIComponent(currentPin)}/messages?username=${encodeURIComponent(currentUser)}`;
+      const r = await fetch(url);
       if (r.ok) {
         const data = await r.json();
         if (data.messages) {
@@ -1172,10 +1174,24 @@
     } catch (e) {}
   }
 
-  // Periodic polling fallback (ensures messages sync on Vercel / serverless deployments)
+  async function loadRoomUsers() {
+    if (!currentPin) return;
+    try {
+      const url = `/api/rooms/${encodeURIComponent(currentPin)}/users?username=${encodeURIComponent(currentUser)}`;
+      const r = await fetch(url);
+      if (r.ok) {
+        const data = await r.json();
+        currentHost = data.host || currentHost;
+        renderUserList(data.users || [], currentHost);
+      }
+    } catch (e) {}
+  }
+
+  // Periodic polling (ensures messages & active users sync live in HTTP mode and on Vercel)
   setInterval(() => {
     if (currentPin && document.getElementById("lobbyModal").style.display === "none") {
       loadPastMessages();
+      loadRoomUsers();
     }
   }, 1500);
 

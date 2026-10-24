@@ -21,8 +21,27 @@ class Room:
         self.room_name = room_name
         self.host = host
         self.connections: Dict[str, WebSocket] = {}
+        self.active_users: Dict[str, float] = {}  # username -> last seen timestamp
         self.messages: List[Dict] = []
         self.created_at = time.time()
+        if host:
+            self.active_users[host] = time.time()
+
+    def touch_user(self, username: str):
+        if username and username.strip():
+            self.active_users[username.strip()] = time.time()
+
+    def get_online_users(self) -> List[str]:
+        now = time.time()
+        online = set()
+        # Active in last 25 seconds via HTTP or polling
+        for u, last_seen in list(self.active_users.items()):
+            if now - last_seen < 25:
+                online.add(u)
+        # Active via WebSocket
+        for u in self.connections.keys():
+            online.add(u)
+        return sorted(list(online))
 
     async def broadcast(self, message: dict):
         """Safely broadcast to all active connections, cleaning dead sockets"""
@@ -40,7 +59,7 @@ class Room:
     async def broadcast_users(self):
         msg = {
             "type": "users_update",
-            "users": list(self.connections.keys()),
+            "users": self.get_online_users(),
             "host": self.host
         }
         await self.broadcast(msg)
@@ -115,8 +134,8 @@ async def create_room(req: CreateRoomRequest):
 @app.post("/api/rooms/join")
 async def join_room(req: JoinRoomRequest):
     pin = req.pin.strip()
-    # Auto-recover/find room so serverless lambdas never fail with 404
     room = manager.get_or_create(pin)
+    room.touch_user(req.username)
 
     return {
         "status": "authorized",
@@ -126,9 +145,25 @@ async def join_room(req: JoinRoomRequest):
         "username": req.username
     }
 
-@app.get("/api/rooms/{pin}/messages")
-async def get_room_messages(pin: str, since_id: Optional[str] = None):
+@app.get("/api/rooms/{pin}/users")
+async def get_room_users(pin: str, username: Optional[str] = None):
+    """Returns the list of active users in this room (both HTTP and WebSocket)"""
     room = manager.get_or_create(pin)
+    if username:
+        room.touch_user(username)
+    users = room.get_online_users()
+    return {
+        "pin": room.pin,
+        "users": users,
+        "host": room.host,
+        "count": len(users)
+    }
+
+@app.get("/api/rooms/{pin}/messages")
+async def get_room_messages(pin: str, since_id: Optional[str] = None, username: Optional[str] = None):
+    room = manager.get_or_create(pin)
+    if username:
+        room.touch_user(username)
     
     # If since_id provided, return only new messages for fast sync
     if since_id:
@@ -144,8 +179,8 @@ async def get_room_messages(pin: str, since_id: Optional[str] = None):
 
 @app.post("/api/rooms/{pin}/send")
 async def send_room_message(pin: str, msg: ChatMessagePayload, request: Request):
-    # Auto-recover/find room so serverless lambdas never fail with 404
     room = manager.get_or_create(pin)
+    room.touch_user(msg.sender)
 
     message_id = msg.msg_id or f"m_{int(time.time()*1000)}_{random.randint(100, 999)}"
     now_ms = int(time.time() * 1000)
