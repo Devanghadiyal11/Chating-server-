@@ -29,10 +29,19 @@ class ConnectionManager:
         }
         messages_history.append(join_msg)
         await self.broadcast(join_msg)
+        await self.broadcast_users()
 
-    def disconnect(self, username: str):
+    async def disconnect(self, username: str):
         if username in self.active_connections:
             del self.active_connections[username]
+            await self.broadcast_users()
+
+    async def broadcast_users(self):
+        msg = {
+            "type": "users_update",
+            "users": list(self.active_connections.keys())
+        }
+        await self.broadcast(msg)
 
     async def broadcast(self, message: dict):
         for username, connection in list(self.active_connections.items()):
@@ -54,6 +63,19 @@ class ChatMessage(BaseModel):
 async def get_messages():
     """Retrieve chat history via HTTP GET"""
     return {"messages": messages_history}
+
+@app.delete("/api/messages")
+async def clear_messages():
+    """Reset lab chat history"""
+    messages_history.clear()
+    clear_msg = {
+        "type": "system",
+        "sender": "System",
+        "content": "Chat history was cleared.",
+        "timestamp": datetime.now().strftime("%H:%M:%S")
+    }
+    await manager.broadcast(clear_msg)
+    return {"status": "cleared"}
 
 @app.post("/api/send")
 async def send_message_http(msg: ChatMessage, request: Request):
@@ -99,7 +121,7 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
             messages_history.append(chat_item)
             await manager.broadcast(chat_item)
     except WebSocketDisconnect:
-        manager.disconnect(username)
+        await manager.disconnect(username)
         leave_msg = {
             "type": "system",
             "sender": "System",
