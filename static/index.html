@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Burp Suite Security Lab - Private Chat Rooms</title>
+  <title>Burp Suite Lab - 4-Digit PIN Chat Rooms</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
       --bg-darker: #090d16;
@@ -42,7 +42,7 @@
 
     /* Sidebar */
     .sidebar {
-      width: 320px;
+      width: 330px;
       background: var(--bg-dark);
       border-right: 1px solid var(--border);
       display: flex;
@@ -68,13 +68,13 @@
       align-items: center;
       justify-content: center;
       color: white;
-      font-weight: 700;
+      font-weight: 800;
       box-shadow: 0 4px 12px rgba(255, 102, 51, 0.3);
     }
     .brand-text h1 { font-size: 0.98rem; font-weight: 700; color: #fff; }
     .brand-text span { font-size: 0.72rem; color: var(--accent); font-weight: 500; }
 
-    /* Current Room Info Card in Sidebar */
+    /* Active Room Card */
     .room-info-card {
       margin: 14px;
       padding: 14px;
@@ -83,35 +83,54 @@
       border-radius: 10px;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 10px;
     }
-    .room-id-tag {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.75rem;
-      background: rgba(15, 23, 42, 0.7);
-      padding: 4px 8px;
-      border-radius: 4px;
-      color: var(--accent);
+    .pin-display-box {
+      background: #090d16;
+      border: 1px dashed var(--accent);
+      border-radius: 8px;
+      padding: 10px;
+      text-align: center;
       display: flex;
+      flex-direction: column;
       align-items: center;
-      justify-content: space-between;
+      gap: 4px;
     }
-    .copy-btn {
-      background: none;
-      border: none;
+    .pin-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      font-weight: 700;
       color: var(--text-muted);
-      cursor: pointer;
-      font-size: 0.72rem;
+      letter-spacing: 0.5px;
     }
-    .copy-btn:hover { color: #fff; }
+    .pin-code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.6rem;
+      font-weight: 800;
+      color: #38bdf8;
+      letter-spacing: 6px;
+      text-shadow: 0 0 12px var(--accent-glow);
+    }
+    .copy-pin-btn {
+      margin-top: 4px;
+      background: rgba(56, 189, 248, 0.15);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      color: var(--accent);
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .copy-pin-btn:hover { background: rgba(56, 189, 248, 0.28); color: white; }
 
     .user-profile-bar {
       display: flex;
       align-items: center;
       justify-content: space-between;
       border-top: 1px solid var(--border);
-      padding-top: 8px;
-      margin-top: 4px;
+      padding-top: 10px;
     }
     .profile-info {
       display: flex;
@@ -161,7 +180,7 @@
       justify-content: space-between;
     }
 
-    /* Protocol Mode Switcher */
+    /* Protocol Switcher */
     .mode-card {
       background: var(--bg-card);
       border-radius: 8px;
@@ -191,6 +210,47 @@
     .tag-ws { background: rgba(59, 130, 246, 0.18); color: #60a5fa; }
     .tag-http { background: rgba(245, 158, 11, 0.18); color: #fbbf24; }
 
+    /* Burp Intruder Cheat Box */
+    .burp-box {
+      background: rgba(255, 102, 51, 0.08);
+      border: 1px dashed rgba(255, 102, 51, 0.4);
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .burp-box h4 {
+      font-size: 0.75rem;
+      color: #ffedd5;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .burp-box p {
+      font-size: 0.7rem;
+      color: #fed7aa;
+      line-height: 1.35;
+      margin-bottom: 8px;
+    }
+    .payload-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+    .payload-btn {
+      font-size: 0.7rem;
+      padding: 3px 6px;
+      background: rgba(255, 102, 51, 0.15);
+      color: #ffedd5;
+      border: 1px solid rgba(255, 102, 51, 0.4);
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .payload-btn:hover {
+      background: rgba(255, 102, 51, 0.35);
+      color: white;
+    }
+
     /* Active Users List */
     .user-list {
       display: flex;
@@ -213,40 +273,7 @@
       background: var(--success);
     }
 
-    /* Burp Quick Payloads Box */
-    .payload-box {
-      background: rgba(255, 102, 51, 0.05);
-      border: 1px dashed rgba(255, 102, 51, 0.3);
-      border-radius: 8px;
-      padding: 10px;
-    }
-    .payload-box p {
-      font-size: 0.72rem;
-      color: #fed7aa;
-      margin-bottom: 8px;
-    }
-    .payload-buttons {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-    }
-    .payload-btn {
-      font-size: 0.72rem;
-      padding: 4px 8px;
-      background: rgba(255, 102, 51, 0.15);
-      color: #ffedd5;
-      border: 1px solid rgba(255, 102, 51, 0.4);
-      border-radius: 4px;
-      cursor: pointer;
-      font-family: 'JetBrains Mono', monospace;
-      transition: all 0.15s;
-    }
-    .payload-btn:hover {
-      background: rgba(255, 102, 51, 0.3);
-      color: #fff;
-    }
-
-    /* Sidebar Footer Buttons */
+    /* Sidebar Footer */
     .sidebar-footer {
       padding: 14px;
       border-top: 1px solid var(--border);
@@ -290,13 +317,15 @@
       align-items: center;
       gap: 8px;
     }
-    .lock-badge {
-      font-size: 0.7rem;
-      padding: 2px 6px;
+    .pin-pill {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      padding: 3px 8px;
       border-radius: 4px;
-      background: rgba(245, 158, 11, 0.2);
-      color: #f59e0b;
-      border: 1px solid rgba(245, 158, 11, 0.3);
+      background: rgba(56, 189, 248, 0.15);
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      font-weight: 700;
     }
     .active-protocol-badge {
       font-size: 0.72rem;
@@ -449,7 +478,7 @@
     .modal-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(9, 13, 22, 0.88);
+      background: rgba(9, 13, 22, 0.9);
       backdrop-filter: blur(8px);
       display: flex;
       align-items: center;
@@ -503,7 +532,7 @@
     .form-group label {
       font-size: 0.8rem;
       color: var(--text-muted);
-      font-weight: 500;
+      font-weight: 600;
     }
     .form-input {
       padding: 10px 14px;
@@ -511,12 +540,27 @@
       border: 1px solid var(--border);
       border-radius: 6px;
       color: white;
-      font-size: 0.9rem;
+      font-size: 0.95rem;
       outline: none;
     }
-    .form-input:focus {
-      border-color: var(--accent);
+    .form-input:focus { border-color: var(--accent); }
+
+    /* 4-digit PIN styled big input */
+    .pin-input-field {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.8rem;
+      letter-spacing: 12px;
+      text-align: center;
+      padding: 12px;
+      font-weight: 800;
+      color: var(--accent);
+      background: #090d16;
+      border: 2px solid var(--border);
+      border-radius: 8px;
+      outline: none;
     }
+    .pin-input-field:focus { border-color: var(--accent); }
+
     .quick-users {
       display: flex;
       gap: 6px;
@@ -524,21 +568,24 @@
     }
     .quick-user-btn {
       flex: 1;
-      padding: 5px;
+      padding: 6px;
       border-radius: 4px;
       background: var(--bg-dark);
       border: 1px solid var(--border);
       color: var(--accent);
       font-size: 0.75rem;
+      font-weight: 600;
       cursor: pointer;
     }
+    .quick-user-btn:hover { background: var(--bg-card-hover); }
+
     .btn-submit {
-      padding: 12px;
+      padding: 13px;
       border-radius: 8px;
       border: none;
       background: linear-gradient(135deg, #0284c7 0%, #2563eb 100%);
       color: white;
-      font-weight: 600;
+      font-weight: 700;
       font-size: 0.95rem;
       cursor: pointer;
       margin-top: 6px;
@@ -547,7 +594,7 @@
       font-size: 0.78rem;
       color: var(--danger);
       background: rgba(239, 68, 68, 0.1);
-      padding: 8px;
+      padding: 8px 12px;
       border-radius: 6px;
       border: 1px solid rgba(239, 68, 68, 0.3);
       display: none;
@@ -563,20 +610,18 @@
       <div class="brand-icon">BP</div>
       <div class="brand-text">
         <h1>Burp Suite Lab</h1>
-        <span>Private Chat Rooms</span>
+        <span>4-Digit PIN Rooms</span>
       </div>
     </div>
 
-    <!-- Active Room & User Info Card -->
+    <!-- Active Room PIN Card -->
     <div class="room-info-card">
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <span style="font-size: 0.75rem; color: var(--text-muted);">Current Room:</span>
-        <span id="roomLockStatus" class="lock-badge" style="display:none;">🔒 Protected</span>
-      </div>
-      <div style="font-weight: 700; font-size: 0.95rem;" id="roomNameDisplay">General Chat</div>
-      <div class="room-id-tag">
-        <span>ID: <b id="roomIdDisplay">general</b></span>
-        <button class="copy-btn" onclick="copyRoomId()">📋 Copy ID</button>
+      <div style="font-size: 0.72rem; color: var(--text-muted); font-weight: 600;" id="roomNameDisplay">Private Room</div>
+      
+      <div class="pin-display-box">
+        <span class="pin-label">Share this 4-Digit PIN:</span>
+        <span class="pin-code" id="currentPinDisplay">----</span>
+        <button class="copy-pin-btn" onclick="copyPin()">📋 Copy PIN</button>
       </div>
 
       <div class="user-profile-bar">
@@ -609,28 +654,29 @@
         </div>
       </div>
 
-      <!-- Quick Test Payloads -->
+      <!-- Burp Suite Intruder Practice Box -->
       <div>
-        <div class="section-title">Quick Test Payloads</div>
-        <div class="payload-box">
-          <p>Click to insert and intercept in Burp:</p>
+        <div class="section-title">Burp Intruder Lab</div>
+        <div class="burp-box">
+          <h4>🎯 Practice PIN Brute Force</h4>
+          <p>This room is protected by a 4-digit PIN. In Burp Suite, you can send <code>POST /api/rooms/join</code> to <b>Intruder</b> with numbers <code>0000 - 9999</code> to brute force room access!</p>
           <div class="payload-buttons">
             <button class="payload-btn" onclick="insertPayload('<script>alert(1)</script>')">XSS alert()</button>
             <button class="payload-btn" onclick="insertPayload('<b>Important</b>')">HTML Bold</button>
             <button class="payload-btn" onclick="insertPayload('\' OR 1=1--')">SQLi String</button>
-            <button class="payload-btn" onclick="insertPayload('System: Room Access Granted')">Spoof Text</button>
+            <button class="payload-btn" onclick="insertPayload('System: Welcome to Lab')">Spoof Text</button>
           </div>
         </div>
       </div>
 
-      <!-- Room Online Users -->
+      <!-- Users in this PIN room -->
       <div>
         <div class="section-title">
           <span>Users In This Room</span>
           <span id="userCount" style="color: var(--accent);">0</span>
         </div>
         <div class="user-list" id="activeUsersList">
-          <div style="font-size: 0.75rem; color: var(--text-muted);">No other users in this room</div>
+          <div style="font-size: 0.75rem; color: var(--text-muted);">Waiting for users to join with PIN...</div>
         </div>
       </div>
     </div>
@@ -638,7 +684,7 @@
     <!-- Sidebar Footer -->
     <div class="sidebar-footer">
       <button class="btn-secondary" onclick="clearRoomChat()">🗑️ Clear Room</button>
-      <button class="btn-secondary" onclick="openLobbyModal()">🚪 Leave / Switch Room</button>
+      <button class="btn-secondary" onclick="openLobbyModal()">🚪 Leave / Change PIN</button>
     </div>
   </aside>
 
@@ -646,8 +692,8 @@
   <main class="chat-main">
     <header class="chat-header">
       <div class="room-badge">
-        <span id="headerRoomTitle"># general</span>
-        <span id="headerRoomLock" class="lock-badge" style="display:none;">🔒 Protected</span>
+        <span id="headerRoomTitle"># Private Room</span>
+        <span class="pin-pill" id="headerPinPill">PIN: ----</span>
       </div>
       <div class="active-protocol-badge proto-ws" id="activeProtoBadge">
         <span>●</span> WebSocket Active
@@ -657,14 +703,14 @@
     <!-- Chat Messages Viewport -->
     <div class="chat-messages" id="messagesArea">
       <div class="msg-system">
-        🔒 Only clients connected with this Room ID can see or receive these messages.
+        🔒 Only clients who join with this 4-Digit PIN can enter or read these messages.
       </div>
     </div>
 
     <!-- Chat Input Area -->
     <div class="chat-bottom">
       <div class="payload-preview">
-        <span>Target: <b class="method-tag" id="previewMethod">WS /ws/{room}/{user}</b></span>
+        <span>Target: <b class="method-tag" id="previewMethod">WS /ws/{pin}/{user}</b></span>
         <span>Payload: <code id="previewJson">{"sender": "...", "content": "..."}</code></span>
       </div>
 
@@ -689,12 +735,12 @@
   </main>
 </div>
 
-<!-- Room Selection / Lobby Modal -->
+<!-- Room PIN Lobby Modal -->
 <div class="modal-overlay" id="lobbyModal">
   <div class="lobby-modal">
     <div class="modal-tabs">
-      <button class="tab-btn active" id="tabCreate" onclick="switchTab('create')">➕ Create Private Room</button>
-      <button class="tab-btn" id="tabJoin" onclick="switchTab('join')">🔑 Join Existing Room</button>
+      <button class="tab-btn active" id="tabCreate" onclick="switchTab('create')">🎲 Create &amp; Generate PIN</button>
+      <button class="tab-btn" id="tabJoin" onclick="switchTab('join')">🔑 Join with 4-Digit PIN</button>
     </div>
 
     <div class="modal-body">
@@ -703,33 +749,24 @@
       <!-- Tab 1: Create Room -->
       <div id="createRoomSection">
         <div class="form-group">
-          <label>Room ID / Code (Unique identifier):</label>
-          <input type="text" id="createRoomId" class="form-input" placeholder="e.g. secret-room-101" value="my-room">
+          <label>Room Name (Optional):</label>
+          <input type="text" id="createRoomName" class="form-input" placeholder="e.g. Alice & Bob Private Chat" value="Security Lab Room">
         </div>
-        <div class="form-group" style="margin-top: 10px;">
-          <label>Room Name (Display Name):</label>
-          <input type="text" id="createRoomName" class="form-input" placeholder="e.g. Team Security Lab" value="Private Team Room">
-        </div>
-        <div class="form-group" style="margin-top: 10px;">
-          <label>Room Password / PIN (Optional):</label>
-          <input type="password" id="createRoomPassword" class="form-input" placeholder="Leave blank if no password required">
-        </div>
+        <p style="font-size: 0.78rem; color: var(--text-muted); margin-top: 8px;">
+          When you click create, the server will automatically generate a unique <b>4-digit PIN</b>. Anyone with that PIN can join your chat!
+        </p>
       </div>
 
-      <!-- Tab 2: Join Room -->
+      <!-- Tab 2: Join with PIN -->
       <div id="joinRoomSection" style="display: none;">
-        <div class="form-group">
-          <label>Room ID to Join:</label>
-          <input type="text" id="joinRoomId" class="form-input" placeholder="Enter Room ID (e.g. secret-room-101)">
-        </div>
-        <div class="form-group" style="margin-top: 10px;">
-          <label>Room Password (If protected):</label>
-          <input type="password" id="joinRoomPassword" class="form-input" placeholder="Enter password if required">
+        <div class="form-group" style="text-align: center;">
+          <label style="margin-bottom: 4px;">Enter the 4-Digit PIN:</label>
+          <input type="text" id="joinPinInput" class="pin-input-field" maxlength="4" placeholder="••••" autocomplete="off">
         </div>
       </div>
 
-      <!-- Common Username Section -->
-      <div class="form-group" style="margin-top: 8px;">
+      <!-- Common Username Selection -->
+      <div class="form-group" style="margin-top: 10px;">
         <label>Your Username:</label>
         <input type="text" id="usernameInput" class="form-input" placeholder="Enter your name" value="Alice">
         <div class="quick-users">
@@ -740,17 +777,15 @@
         </div>
       </div>
 
-      <button class="btn-submit" id="submitActionBtn" onclick="handleLobbySubmit()">Create &amp; Enter Room</button>
+      <button class="btn-submit" id="submitActionBtn" onclick="handleLobbySubmit()">🎲 Generate 4-Digit PIN &amp; Create</button>
     </div>
   </div>
 </div>
 
 <script>
   let ws = null;
-  let currentRoom = "general";
-  let currentRoomName = "General Chat";
-  let currentRoomPassword = "";
-  let isRoomProtected = false;
+  let currentPin = "";
+  let currentRoomName = "Private Room";
   let currentUser = "Alice";
   let currentTab = "create";
 
@@ -776,13 +811,14 @@
       tabJoin.classList.remove("active");
       createSec.style.display = "block";
       joinSec.style.display = "none";
-      submitBtn.textContent = "Create & Enter Room";
+      submitBtn.textContent = "🎲 Generate 4-Digit PIN & Create";
     } else {
       tabJoin.classList.add("active");
       tabCreate.classList.remove("active");
       createSec.style.display = "none";
       joinSec.style.display = "block";
-      submitBtn.textContent = "Verify & Join Room";
+      submitBtn.textContent = "🚀 Enter Room with PIN";
+      setTimeout(() => document.getElementById("joinPinInput").focus(), 100);
     }
   }
 
@@ -812,21 +848,16 @@
     currentUser = user;
 
     if (currentTab === "create") {
-      const roomId = document.getElementById("createRoomId").value.trim().toLowerCase();
-      const roomName = document.getElementById("createRoomName").value.trim() || roomId;
-      const pwd = document.getElementById("createRoomPassword").value;
-
-      if (!roomId) return showError("Please specify a Room ID");
-
+      const roomName = document.getElementById("createRoomName").value.trim() || "Private Room";
       try {
         const resp = await fetch("/api/rooms/create", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ room_id: roomId, room_name: roomName, password: pwd })
+          body: JSON.stringify({ room_name: roomName, creator: currentUser })
         });
         const data = await resp.json();
         if (resp.ok) {
-          enterRoom(roomId, roomName, pwd, !!pwd);
+          enterRoom(data.pin, data.room_name);
         } else {
           showError(data.detail || "Failed to create room");
         }
@@ -834,22 +865,20 @@
         showError("Network error: " + err.message);
       }
     } else {
-      const roomId = document.getElementById("joinRoomId").value.trim().toLowerCase();
-      const pwd = document.getElementById("joinRoomPassword").value;
-
-      if (!roomId) return showError("Please enter the Room ID to join");
+      const pin = document.getElementById("joinPinInput").value.trim();
+      if (!pin || pin.length < 4) return showError("Please enter a valid 4-digit PIN");
 
       try {
-        const resp = await fetch("/api/rooms/verify", {
+        const resp = await fetch("/api/rooms/join", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ room_id: roomId, password: pwd })
+          body: JSON.stringify({ pin: pin, username: currentUser })
         });
         const data = await resp.json();
         if (resp.ok) {
-          enterRoom(data.room_id, data.room_name, pwd, data.is_protected);
+          enterRoom(data.pin, data.room_name);
         } else {
-          showError(data.detail || "Invalid room or password");
+          showError(data.detail || "Room with this PIN was not found");
         }
       } catch (err) {
         showError("Network error: " + err.message);
@@ -857,36 +886,28 @@
     }
   }
 
-  function enterRoom(roomId, roomName, password, isProtected) {
-    currentRoom = roomId;
+  function enterRoom(pin, roomName) {
+    currentPin = pin;
     currentRoomName = roomName;
-    currentRoomPassword = password;
-    isRoomProtected = isProtected;
 
-    // Update UI elements
-    document.getElementById("roomIdDisplay").textContent = roomId;
+    document.getElementById("currentPinDisplay").textContent = pin;
     document.getElementById("roomNameDisplay").textContent = roomName;
     document.getElementById("headerRoomTitle").textContent = "# " + roomName;
+    document.getElementById("headerPinPill").textContent = "PIN: " + pin;
     document.getElementById("myUsernameDisplay").textContent = currentUser;
     document.getElementById("myAvatar").textContent = currentUser.charAt(0).toUpperCase();
     document.getElementById("myAvatar").style.backgroundColor = getAvatarColor(currentUser);
 
-    const lockDisplays = [document.getElementById("roomLockStatus"), document.getElementById("headerRoomLock")];
-    lockDisplays.forEach(el => el.style.display = isProtected ? "inline-block" : "none");
-
     document.getElementById("messagesArea").innerHTML = "";
     document.getElementById("lobbyModal").style.display = "none";
 
-    connectRoomWebSocket();
+    connectWebSocket();
     loadPastMessages();
   }
 
-  function connectRoomWebSocket() {
+  function connectWebSocket() {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    let wsUrl = `${protocol}//${window.location.host}/ws/${encodeURIComponent(currentRoom)}/${encodeURIComponent(currentUser)}`;
-    if (currentRoomPassword) {
-      wsUrl += `?password=${encodeURIComponent(currentRoomPassword)}`;
-    }
+    const wsUrl = `${protocol}//${window.location.host}/ws/${encodeURIComponent(currentPin)}/${encodeURIComponent(currentUser)}`;
 
     ws = new WebSocket(wsUrl);
 
@@ -925,7 +946,7 @@
     list.innerHTML = "";
 
     if (!users || users.length === 0) {
-      list.innerHTML = `<div style="font-size:0.75rem; color:var(--text-muted);">No users in this room</div>`;
+      list.innerHTML = `<div style="font-size:0.75rem; color:var(--text-muted);">Waiting for users to join...</div>`;
       return;
     }
 
@@ -993,15 +1014,14 @@
     const previewJson = document.getElementById("previewJson");
 
     if (mode === "ws") {
-      previewMethod.textContent = `WS /ws/${currentRoom}/${currentUser}`;
+      previewMethod.textContent = `WS /ws/${currentPin || 'pin'}/${currentUser}`;
       previewMethod.style.color = "#60a5fa";
     } else {
-      previewMethod.textContent = `POST /api/rooms/${currentRoom}/send`;
+      previewMethod.textContent = `POST /api/rooms/${currentPin || 'pin'}/send`;
       previewMethod.style.color = "#ff6633";
     }
 
     const payloadObj = { sender: currentUser, content: inputVal };
-    if (currentRoomPassword) payloadObj.password = currentRoomPassword;
     previewJson.textContent = JSON.stringify(payloadObj);
   }
 
@@ -1025,14 +1045,10 @@
       updatePayloadPreview();
     } else {
       try {
-        const response = await fetch(`/api/rooms/${encodeURIComponent(currentRoom)}/send`, {
+        const response = await fetch(`/api/rooms/${encodeURIComponent(currentPin)}/send`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sender: currentUser,
-            content: content,
-            password: currentRoomPassword || null
-          })
+          body: JSON.stringify({ sender: currentUser, content: content })
         });
         if (response.ok) {
           input.value = "";
@@ -1047,10 +1063,8 @@
   }
 
   async function loadPastMessages() {
-    let url = `/api/rooms/${encodeURIComponent(currentRoom)}/messages`;
-    if (currentRoomPassword) url += `?password=${encodeURIComponent(currentRoomPassword)}`;
     try {
-      const r = await fetch(url);
+      const r = await fetch(`/api/rooms/${encodeURIComponent(currentPin)}/messages`);
       if (r.ok) {
         const data = await r.json();
         if (data.messages) data.messages.forEach(appendMessage);
@@ -1059,20 +1073,18 @@
   }
 
   async function clearRoomChat() {
-    if (!confirm(`Clear all messages in room "${currentRoom}"?`)) return;
-    let url = `/api/rooms/${encodeURIComponent(currentRoom)}/messages`;
-    if (currentRoomPassword) url += `?password=${encodeURIComponent(currentRoomPassword)}`;
+    if (!confirm(`Clear all messages in room "${currentPin}"?`)) return;
     try {
-      await fetch(url, { method: "DELETE" });
+      await fetch(`/api/rooms/${encodeURIComponent(currentPin)}/messages`, { method: "DELETE" });
       document.getElementById("messagesArea").innerHTML = `<div class="msg-system">Room messages cleared.</div>`;
     } catch (e) {
       console.error(e);
     }
   }
 
-  function copyRoomId() {
-    navigator.clipboard.writeText(currentRoom);
-    alert(`Copied Room ID: "${currentRoom}". Share this ID so your friends can join this room!`);
+  function copyPin() {
+    navigator.clipboard.writeText(currentPin);
+    alert(`Copied 4-digit PIN: [ ${currentPin} ]. Send this PIN to anyone who wants to join!`);
   }
 
   function escapeHtml(text) {

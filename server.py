@@ -1,7 +1,8 @@
 import asyncio
+import random
 from datetime import datetime
 from typing import List, Dict, Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, status, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -13,17 +14,12 @@ app = FastAPI(title="Burp Suite Chat Lab Server")
 # --- Room & Connection Management ---
 
 class Room:
-    def __init__(self, room_id: str, room_name: str, password: Optional[str] = None):
-        self.room_id = room_id
+    def __init__(self, room_id: str, room_name: str, pin: str):
+        self.room_id = room_id  # Pin acts as room_id
+        self.pin = pin
         self.room_name = room_name
-        self.password = password or ""  # empty means no password required
         self.connections: Dict[str, WebSocket] = {}
         self.messages: List[Dict] = []
-
-    def check_password(self, pwd: Optional[str]) -> bool:
-        if not self.password:
-            return True
-        return self.password == (pwd or "")
 
     async def broadcast(self, message: dict):
         for username, ws in list(self.connections.items()):
@@ -42,107 +38,106 @@ class Room:
 class RoomManager:
     def __init__(self):
         self.rooms: Dict[str, Room] = {}
-        # Create default public room
-        self.rooms["general"] = Room("general", "General Public Chat", "")
+        # Default public lobby room
+        self.rooms["general"] = Room("general", "General Public Chat", "0000")
 
-    def get_or_create(self, room_id: str, name: str = "", password: str = "") -> Room:
-        if room_id not in self.rooms:
-            self.rooms[room_id] = Room(room_id, name or room_id, password)
-        return self.rooms[room_id]
+    def generate_pin(self) -> str:
+        """Generate unique 4-digit PIN (1000 to 9999)"""
+        for _ in range(10000):
+            pin = f"{random.randint(1000, 9999)}"
+            if pin not in self.rooms:
+                return pin
+        return f"{random.randint(10000, 99999)}"
 
     def get_room(self, room_id: str) -> Optional[Room]:
-        return self.rooms.get(room_id)
+        return self.rooms.get(room_id.strip())
 
 manager = RoomManager()
 
 # --- Pydantic Request Models ---
 
 class CreateRoomRequest(BaseModel):
-    room_id: str
-    room_name: Optional[str] = None
-    password: Optional[str] = None
+    room_name: Optional[str] = "Private Chat"
+    creator: Optional[str] = "User"
+    custom_pin: Optional[str] = None  # Optional custom 4-digit pin
 
-class VerifyRoomRequest(BaseModel):
-    room_id: str
-    password: Optional[str] = None
+class JoinRoomRequest(BaseModel):
+    pin: str
+    username: str
 
-class RoomChatMessage(BaseModel):
+class ChatMessagePayload(BaseModel):
     sender: str
     content: str
-    password: Optional[str] = None
 
-# --- REST Endpoints (Great for Burp Suite Interception & Testing) ---
+# --- REST Endpoints (Great for Burp Suite Interception, Intruder & Repeater) ---
 
 @app.post("/api/rooms/create")
 async def create_room(req: CreateRoomRequest):
     """
-    Create a new private or password-protected chat room.
-    Burp exercise: inspect if passwords or room metadata are handled properly.
+    Creates a new private room and generates a 4-digit PIN.
+    Burp testing: Analyze entropy of generated PINs or specify arbitrary custom PINs.
     """
-    clean_id = req.room_id.strip().lower()
-    if not clean_id:
-        raise HTTPException(status_code=400, detail="Room ID cannot be empty")
-    
-    if clean_id in manager.rooms:
-        return {"status": "exists", "room_id": clean_id, "message": "Room already exists"}
+    if req.custom_pin and req.custom_pin.strip():
+        pin = req.custom_pin.strip()
+    else:
+        pin = manager.generate_pin()
 
-    name = req.room_name.strip() if req.room_name else clean_id
-    pwd = req.password.strip() if req.password else ""
-    room = Room(room_id=clean_id, room_name=name, password=pwd)
-    manager.rooms[clean_id] = room
+    if pin in manager.rooms:
+        return {"status": "exists", "pin": pin, "room_name": manager.rooms[pin].room_name}
+
+    name = req.room_name.strip() if req.room_name else f"Room #{pin}"
+    room = Room(room_id=pin, room_name=name, pin=pin)
+    manager.rooms[pin] = room
 
     return {
         "status": "created",
-        "room_id": clean_id,
+        "pin": pin,
         "room_name": name,
-        "is_protected": bool(pwd)
+        "message": f"Room created successfully! Share 4-digit PIN: {pin}"
     }
 
-@app.post("/api/rooms/verify")
-async def verify_room(req: VerifyRoomRequest):
+@app.post("/api/rooms/join")
+async def join_room(req: JoinRoomRequest):
     """
-    Verify if a room exists and password matches before joining.
-    Burp exercise: Test authentication bypass or brute-forcing room passwords!
+    Verifies if a 4-digit PIN exists.
+    Burp Intruder Exercise:
+    Since PIN is 4 digits (0000-9999), you can use Burp Intruder to brute force active room PINs!
     """
-    clean_id = req.room_id.strip().lower()
-    room = manager.get_room(clean_id)
+    pin = req.pin.strip()
+    room = manager.get_room(pin)
     if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
-    
-    if not room.check_password(req.password):
-        raise HTTPException(status_code=401, detail="Invalid room password")
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Room with PIN '{pin}' not found! Check the PIN and try again."
+        )
 
     return {
         "status": "authorized",
-        "room_id": room.room_id,
+        "pin": room.pin,
         "room_name": room.room_name,
-        "is_protected": bool(room.password)
+        "username": req.username
     }
 
-@app.get("/api/rooms/{room_id}/messages")
-async def get_room_messages(room_id: str, password: Optional[str] = None):
+@app.get("/api/rooms/{pin}/messages")
+async def get_room_messages(pin: str):
     """
-    Retrieve message history for a specific room.
-    Burp exercise: Test IDOR by changing room_id to read other private chats!
+    Retrieve message history for room with this 4-digit PIN.
+    Burp Exercise: Test IDOR by changing the PIN in the URL.
     """
-    room = manager.get_room(room_id.lower())
+    room = manager.get_room(pin)
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
-    if not room.check_password(password):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    return {"room_id": room.room_id, "messages": room.messages}
+    return {"pin": room.pin, "room_name": room.room_name, "messages": room.messages}
 
-@app.post("/api/rooms/{room_id}/send")
-async def send_room_message(room_id: str, msg: RoomChatMessage, request: Request):
+@app.post("/api/rooms/{pin}/send")
+async def send_room_message(pin: str, msg: ChatMessagePayload, request: Request):
     """
-    Send a message via HTTP POST into a specific room.
-    Burp exercise: Tamper with sender identity or room_id parameters!
+    Send a message via HTTP POST into a room using its 4-digit PIN.
+    Burp Exercise: Intercept and alter sender name or message contents.
     """
-    room = manager.get_room(room_id.lower())
+    room = manager.get_room(pin)
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
-    if not room.check_password(msg.password):
-        raise HTTPException(status_code=401, detail="Unauthorized")
 
     chat_item = {
         "type": "chat",
@@ -155,13 +150,11 @@ async def send_room_message(room_id: str, msg: RoomChatMessage, request: Request
     await room.broadcast(chat_item)
     return {"status": "success", "message": chat_item}
 
-@app.delete("/api/rooms/{room_id}/messages")
-async def clear_room_messages(room_id: str, password: Optional[str] = None):
-    room = manager.get_room(room_id.lower())
+@app.delete("/api/rooms/{pin}/messages")
+async def clear_room_messages(pin: str):
+    room = manager.get_room(pin)
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
-    if not room.check_password(password):
-        raise HTTPException(status_code=401, detail="Unauthorized")
 
     room.messages.clear()
     clear_msg = {
@@ -179,7 +172,7 @@ async def legacy_get_messages():
     return await get_room_messages("general")
 
 @app.post("/api/send")
-async def legacy_send_message(msg: RoomChatMessage, request: Request):
+async def legacy_send_message(msg: ChatMessagePayload, request: Request):
     return await send_room_message("general", msg, request)
 
 @app.get("/api/users")
@@ -189,22 +182,15 @@ async def legacy_get_users():
 
 # --- WebSocket Room Endpoint ---
 
-@app.websocket("/ws/{room_id}/{username}")
-async def websocket_room_endpoint(websocket: WebSocket, room_id: str, username: str, password: Optional[str] = Query(default=None)):
-    clean_id = room_id.lower()
-    room = manager.get_room(clean_id)
-    
-    # If room doesn't exist or password mismatch, reject connection
+@app.websocket("/ws/{pin}/{username}")
+async def websocket_room_endpoint(websocket: WebSocket, pin: str, username: str):
+    clean_pin = pin.strip()
+    room = manager.get_room(clean_pin)
+
     if not room:
         await websocket.accept()
-        await websocket.send_json({"type": "error", "content": "Room not found. Please create it first."})
+        await websocket.send_json({"type": "error", "content": f"Room with PIN {clean_pin} does not exist."})
         await websocket.close(code=4004)
-        return
-        
-    if not room.check_password(password):
-        await websocket.accept()
-        await websocket.send_json({"type": "error", "content": "Unauthorized: Incorrect room password."})
-        await websocket.close(code=4001)
         return
 
     await websocket.accept()
@@ -213,7 +199,7 @@ async def websocket_room_endpoint(websocket: WebSocket, room_id: str, username: 
     join_msg = {
         "type": "system",
         "sender": "System",
-        "content": f"{username} joined the room.",
+        "content": f"{username} joined the chat.",
         "timestamp": datetime.now().strftime("%H:%M:%S")
     }
     room.messages.append(join_msg)
@@ -237,19 +223,18 @@ async def websocket_room_endpoint(websocket: WebSocket, room_id: str, username: 
         leave_msg = {
             "type": "system",
             "sender": "System",
-            "content": f"{username} left the room.",
+            "content": f"{username} left the chat.",
             "timestamp": datetime.now().strftime("%H:%M:%S")
         }
         room.messages.append(leave_msg)
         await room.broadcast(leave_msg)
         await room.broadcast_users()
 
-# Legacy single-room WebSocket endpoint
 @app.websocket("/ws/{username}")
 async def legacy_websocket_endpoint(websocket: WebSocket, username: str):
     await websocket_room_endpoint(websocket, "general", username)
 
-# --- Serve Static UI ---
+# --- Serve Frontend Web UI ---
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -264,7 +249,7 @@ async def get_index():
 
 if __name__ == "__main__":
     print("==================================================================")
-    print("  Burp Suite Chat Lab Server (With Private Rooms)")
+    print("  Burp Suite Chat Lab Server (4-Digit PIN Rooms)")
     print("  Local access:    http://127.0.0.1:8000")
     print("  Network access:  http://0.0.0.0:8000")
     print("  Press Ctrl + C to stop.")
