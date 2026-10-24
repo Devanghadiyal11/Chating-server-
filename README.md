@@ -54,6 +54,13 @@ A modern, full-featured multi-client real-time chat application built with **Fas
 - **Fullscreen Lightbox:** Tap or click any image in the chat to expand it into full resolution.
 - **Burp Suite Testing:** Great for testing image file upload security, MIME-type spoofing, and file size limits!
 
+### 7. ✍️ Auto Text Alignment & Multi-Line Smart Input
+- **Smart Alignment for Long Text:** Messages with substantial text (multiple paragraphs, code blocks, or > 80 characters) automatically switch to clean justified block alignment (`text-align: justify; text-justify: inter-word; text-align-last: start`) to eliminate jagged edges while preserving natural reading flow.
+- **Bidirectional Auto Detection (`dir="auto"`):** Automatically aligns English, Hindi, Urdu, Arabic, and other multilingual text to its correct natural reading direction.
+- **Preserved Formatting & Word Wrapping:** Built with `white-space: pre-wrap;` and `overflow-wrap: anywhere;` so line breaks, code indentations, and long URLs never overflow or break UI bounds.
+- **Right/Left Edge Alignment:** Your own messages, sender name, and timestamps align flush right to your avatar, while other participants' messages align flush left.
+- **Auto-Expanding Input Box:** The input box automatically expands from a single line up to 120px tall as you type longer messages, with support for `Shift + Enter` to insert new lines and `Enter` to send.
+
 ---
 
 ## 📱 Mobile vs Desktop Experience

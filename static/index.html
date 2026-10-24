@@ -412,19 +412,43 @@
       justify-content: center;
       flex-shrink: 0;
     }
-    .msg-content-wrapper { display: flex; flex-direction: column; gap: 3px; }
-    .msg-header { display: flex; align-items: baseline; gap: 8px; }
+    .msg-content-wrapper { 
+      display: flex; 
+      flex-direction: column; 
+      gap: 3px; 
+      min-width: 0;
+      max-width: 100%;
+    }
+    .msg-row.mine .msg-content-wrapper {
+      align-items: flex-end;
+    }
+    .msg-row:not(.mine) .msg-content-wrapper {
+      align-items: flex-start;
+    }
+    .msg-header { 
+      display: flex; 
+      align-items: baseline; 
+      gap: 8px; 
+    }
+    .msg-row.mine .msg-header {
+      flex-direction: row-reverse;
+      justify-content: flex-end;
+    }
+    .msg-row:not(.mine) .msg-header {
+      justify-content: flex-start;
+    }
     .msg-sender { font-size: 0.82rem; font-weight: 600; color: #94a3b8; }
     .msg-time { font-size: 0.68rem; color: #64748b; font-family: 'JetBrains Mono', monospace; }
     .msg-bubble {
       padding: 10px 15px;
       border-radius: 12px;
       font-size: 0.92rem;
-      line-height: 1.45;
-      word-break: break-word;
+      line-height: 1.55;
       background: var(--bg-card);
       border: 1px solid var(--border);
       color: #e2e8f0;
+      max-width: 100%;
+      box-sizing: border-box;
     }
     .msg-row.mine .msg-bubble {
       background: #1d4ed8;
@@ -433,6 +457,24 @@
       border-top-right-radius: 2px;
     }
     .msg-row:not(.mine) .msg-bubble { border-top-left-radius: 2px; }
+
+    /* Text formatting & auto alignment */
+    .msg-text {
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+      text-align: start;
+      line-height: 1.55;
+      unicode-bidi: plaintext;
+    }
+    /* Auto alignment for much text / long paragraphs */
+    .msg-text.auto-align-long {
+      text-align: justify;
+      text-justify: inter-word;
+      text-align-last: start;
+      hyphens: auto;
+      -webkit-hyphens: auto;
+    }
 
     /* Input Area */
     .chat-bottom {
@@ -559,7 +601,7 @@
       display: flex; 
       gap: 8px; 
       width: 100%;
-      align-items: center;
+      align-items: flex-end;
     }
     .chat-input {
       flex: 1;
@@ -570,7 +612,15 @@
       border-radius: 8px;
       color: white;
       font-size: 0.95rem;
+      font-family: inherit;
       outline: none;
+      resize: none;
+      height: 44px;
+      min-height: 44px;
+      max-height: 120px;
+      line-height: 1.4;
+      box-sizing: border-box;
+      overflow-y: auto;
     }
     .chat-input:focus {
       border-color: var(--accent);
@@ -862,6 +912,8 @@
         padding: 9px 12px !important;
         font-size: 0.92rem !important;
         min-width: 0 !important;
+        min-height: 40px !important;
+        height: 40px !important;
       }
       .btn-send {
         padding: 0 12px !important;
@@ -1048,14 +1100,14 @@
           </svg>
         </button>
 
-        <input 
-          type="text" 
+        <textarea 
           id="chatInput" 
           class="chat-input" 
+          rows="1"
           placeholder="Type message or add a photo caption..." 
-          onkeydown="if(event.key==='Enter') sendMessage()"
-          oninput="updatePayloadPreview()"
-        >
+          onkeydown="handleChatInputKey(event)"
+          oninput="handleChatInput(this)"
+        ></textarea>
         <button class="btn-send" onclick="sendMessage()">
           <span>Send</span>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -1423,7 +1475,8 @@
         contentHtml += `<img class="chat-photo" src="${msg.image}" onclick="openLightbox('${msg.image}')" alt="Photo" title="Click to view full size">`;
       }
       if (msg.content) {
-        contentHtml += `<div>${escapeHtml(msg.content)}</div>`;
+        const isLongText = (msg.content.length > 80 || msg.content.includes('\n'));
+        contentHtml += `<div class="msg-text ${isLongText ? 'auto-align-long' : ''}" dir="auto">${escapeHtml(msg.content)}</div>`;
       }
 
       row.innerHTML = `
@@ -1500,11 +1553,27 @@
     previewJson.textContent = JSON.stringify(payloadObj);
   }
 
+  function handleChatInput(el) {
+    const isMobile = window.innerWidth <= 860;
+    const baseH = isMobile ? 40 : 44;
+    el.style.height = 'auto';
+    const newHeight = Math.min(el.scrollHeight, 120);
+    el.style.height = Math.max(newHeight, baseH) + 'px';
+    updatePayloadPreview();
+  }
+
+  function handleChatInputKey(event) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      sendMessage();
+    }
+  }
+
   function insertPayload(str) {
     const input = document.getElementById("chatInput");
     input.value = str;
     input.focus();
-    updatePayloadPreview();
+    handleChatInput(input);
   }
 
   function handlePhotoSelected(event) {
@@ -1598,11 +1667,17 @@
 
     clearStagedPhoto();
 
+    const resetInput = () => {
+      input.value = "";
+      const isMobile = window.innerWidth <= 860;
+      input.style.height = (isMobile ? 40 : 44) + "px";
+      updatePayloadPreview();
+    };
+
     // 1. Try WebSocket if connected
     if (mode === "ws" && ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(payload));
-      input.value = "";
-      updatePayloadPreview();
+      resetInput();
     } else {
       // 2. HTTP POST mode (or automatic rock-solid fallback if WebSocket is reconnecting)
       try {
@@ -1614,8 +1689,7 @@
         if (response.ok) {
           const res = await response.json();
           if (res.message) appendMessage(res.message);
-          input.value = "";
-          updatePayloadPreview();
+          resetInput();
         } else {
           const errData = await response.json().catch(() => ({}));
           const errMsg = errData.detail || errData.message || ("HTTP " + response.status);
