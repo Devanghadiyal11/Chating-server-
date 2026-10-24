@@ -47,6 +47,13 @@ A modern, full-featured multi-client real-time chat application built with **Fas
 - **HTTP POST Mode (Default):** All messages are sent via standard `POST /api/rooms/{pin}/send` requests. Perfect for instant capture in **Burp Suite Proxy $\rightarrow$ HTTP history** and **Repeater**.
 - **WebSocket Mode:** Switch to real-time full-duplex WebSocket frames (`/ws/{pin}/{user}`) to inspect raw bidirectional frames in **Burp Suite Proxy $\rightarrow$ WebSockets history**.
 
+### 6. 📸 Photo Uploading & Lightbox Viewer
+- **Instant Photo Sharing:** Click the 📷 camera button to select photos from your device, computer, or camera roll.
+- **Client-Side Compression:** Automatically resizes and optimizes photos via HTML5 Canvas before sending, producing lightweight (~40–80 KB) images with zero transfer lag.
+- **Serverless & Cloud Friendly:** Base64 data-URL transmission guarantees photo sharing works on **Vercel, Render, Railway, local PC, and mobile** without needing local disk writes or S3 buckets.
+- **Fullscreen Lightbox:** Tap or click any image in the chat to expand it into full resolution.
+- **Burp Suite Testing:** Great for testing image file upload security, MIME-type spoofing, and file size limits!
+
 ---
 
 ## 📱 Mobile vs Desktop Experience

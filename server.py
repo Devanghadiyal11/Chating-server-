@@ -106,7 +106,8 @@ class JoinRoomRequest(BaseModel):
 
 class ChatMessagePayload(BaseModel):
     sender: str
-    content: str
+    content: Optional[str] = ""
+    image: Optional[str] = None  # Base64 data URL for photos
     msg_id: Optional[str] = None
 
 # --- REST Endpoints ---
@@ -186,9 +187,10 @@ async def send_room_message(pin: str, msg: ChatMessagePayload, request: Request)
     now_ms = int(time.time() * 1000)
     chat_item = {
         "id": message_id,
-        "type": "chat",
+        "type": "image" if msg.image else "chat",
         "sender": msg.sender,
-        "content": msg.content,
+        "content": msg.content or "",
+        "image": msg.image,
         "timestamp": datetime.now().strftime("%H:%M:%S"),
         "time_ms": now_ms,
         "client_ip": request.client.host if request.client else "unknown"
@@ -289,9 +291,10 @@ async def websocket_room_endpoint(websocket: WebSocket, pin: str, username: str)
             message_id = data.get("msg_id") or f"m_{int(time.time()*1000)}_{random.randint(100, 999)}"
             chat_item = {
                 "id": message_id,
-                "type": "chat",
+                "type": "image" if data.get("image") else "chat",
                 "sender": data.get("sender", username),
                 "content": data.get("content", ""),
+                "image": data.get("image"),
                 "timestamp": datetime.now().strftime("%H:%M:%S"),
                 "time_ms": int(time.time() * 1000)
             }
