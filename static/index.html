@@ -1397,6 +1397,8 @@
     toggleSidebar(false);
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     currentPin = "";
+    lastSeenMsgId = null;
+    renderedMessageIds.clear();
     if (ws) ws.close();
     document.getElementById("lobbyModal").style.display = "flex";
   }
@@ -1938,15 +1940,23 @@
     }
   }
 
+  let lastSeenMsgId = null;
+
   async function loadPastMessages() {
     if (!currentPin) return;
     try {
-      const url = `/api/rooms/${encodeURIComponent(currentPin)}/messages?username=${encodeURIComponent(currentUser)}`;
+      let url = `/api/rooms/${encodeURIComponent(currentPin)}/messages?username=${encodeURIComponent(currentUser)}`;
+      if (lastSeenMsgId) {
+        url += `&since_id=${encodeURIComponent(lastSeenMsgId)}`;
+      }
       const r = await fetch(url);
       if (r.ok) {
         const data = await r.json();
-        if (data.messages) {
-          data.messages.forEach(appendMessage);
+        if (data.messages && data.messages.length > 0) {
+          data.messages.forEach(msg => {
+            appendMessage(msg);
+            if (msg.id) lastSeenMsgId = msg.id;
+          });
         }
       }
     } catch (e) {}
@@ -1965,19 +1975,21 @@
     } catch (e) {}
   }
 
-  // Periodic polling (ensures messages & active users sync live in HTTP mode and on Vercel)
+  // Periodic fast polling (ensures messages & active users sync live in HTTP mode and on Vercel)
   setInterval(() => {
     if (currentPin && document.getElementById("lobbyModal").style.display === "none") {
       loadPastMessages();
       loadRoomUsers();
     }
-  }, 1500);
+  }, 1000);
 
   async function clearRoomChat() {
     if (!confirm(`Clear all messages in room "${currentPin}"?`)) return;
     try {
       await fetch(`/api/rooms/${encodeURIComponent(currentPin)}/messages`, { method: "DELETE" });
       document.getElementById("messagesArea").innerHTML = `<div class="msg-system">Room messages cleared.</div>`;
+      lastSeenMsgId = null;
+      renderedMessageIds.clear();
     } catch (e) {
       console.error(e);
     }
