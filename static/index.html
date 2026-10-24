@@ -25,30 +25,38 @@
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
+    html, body {
       font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
       background-color: var(--bg-darker);
       color: var(--text-main);
-      height: 100vh;
+      width: 100%;
+      height: 100%;
+      height: 100dvh;
       overflow: hidden;
+      margin: 0;
+      padding: 0;
       display: flex;
     }
 
     .app-layout {
       display: flex;
-      width: 100vw;
-      height: 100vh;
+      width: 100%;
+      height: 100%;
+      height: 100dvh;
+      overflow: hidden;
+      position: relative;
     }
 
     /* Sidebar */
     .sidebar {
-      width: 330px;
+      width: 320px;
       background: var(--bg-dark);
       border-right: 1px solid var(--border);
       display: flex;
       flex-direction: column;
       flex-shrink: 0;
       z-index: 10;
+      height: 100%;
     }
 
     .brand-header {
@@ -298,8 +306,13 @@
       flex: 1;
       display: flex;
       flex-direction: column;
-      height: 100vh;
+      width: 100%;
+      min-width: 0; /* Essential for flexbox child shrinking */
+      height: 100%;
+      height: 100dvh;
       background: var(--bg-darker);
+      overflow: hidden;
+      position: relative;
     }
 
     .chat-header {
@@ -542,9 +555,15 @@
     }
     .payload-preview .method-tag { color: var(--burp-orange); font-weight: 700; }
 
-    .input-form { display: flex; gap: 10px; }
+    .input-form { 
+      display: flex; 
+      gap: 8px; 
+      width: 100%;
+      align-items: center;
+    }
     .chat-input {
       flex: 1;
+      min-width: 0; /* CRITICAL: Allows input to shrink inside flex container */
       padding: 11px 16px;
       background: var(--bg-darker);
       border: 1px solid var(--border);
@@ -731,14 +750,17 @@
       z-index: 40;
     }
 
-    @media (max-width: 768px) {
+    @media (max-width: 860px) {
       .mobile-menu-btn {
-        display: inline-flex;
+        display: inline-flex !important;
         align-items: center;
         justify-content: center;
+        min-width: 36px;
+        min-height: 36px;
       }
       .mobile-users-pill {
-        display: inline-flex;
+        display: inline-flex !important;
+        white-space: nowrap;
       }
       /* Clean Screen: Hide technical Burp debugging and payload preview on mobile */
       .payload-preview {
@@ -753,65 +775,125 @@
       
       /* Mobile Off-canvas Slide Drawer */
       .sidebar {
-        position: fixed;
-        top: 0;
-        bottom: 0;
-        left: -100%;
-        width: 82%;
-        max-width: 320px;
-        transition: left 0.28s cubic-bezier(0.4, 0, 0.2, 1);
-        z-index: 50;
-        box-shadow: 10px 0 30px rgba(0,0,0,0.85);
+        position: fixed !important;
+        top: 0 !important;
+        bottom: 0 !important;
+        left: 0 !important;
+        width: min(85vw, 320px) !important;
+        max-width: 320px !important;
+        height: 100% !important;
+        height: 100dvh !important;
+        transform: translateX(-100%) !important;
+        transition: transform 0.28s ease !important;
+        z-index: 1000 !important;
+        visibility: hidden !important;
+        box-shadow: 10px 0 30px rgba(0,0,0,0.85) !important;
       }
       .sidebar.open {
-        left: 0;
+        transform: translateX(0) !important;
+        visibility: visible !important;
+      }
+      .sidebar-backdrop {
+        position: fixed !important;
+        inset: 0 !important;
+        background: rgba(0, 0, 0, 0.7) !important;
+        backdrop-filter: blur(4px) !important;
+        z-index: 999 !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        transition: opacity 0.28s ease !important;
+        display: block !important;
       }
       .sidebar-backdrop.active {
-        display: block;
+        opacity: 1 !important;
+        pointer-events: auto !important;
       }
 
       /* Clean mobile chat layout */
+      .chat-main {
+        width: 100% !important;
+        min-width: 0 !important;
+        height: 100% !important;
+        height: 100dvh !important;
+        overflow: hidden !important;
+      }
       .chat-header {
-        padding: 10px 14px;
+        padding: 10px 12px !important;
+        width: 100% !important;
+        gap: 8px !important;
       }
       .room-badge {
-        font-size: 0.92rem;
-        gap: 6px;
+        font-size: 0.9rem !important;
+        gap: 6px !important;
+        min-width: 0 !important;
+        overflow: hidden !important;
+      }
+      #headerRoomTitle {
+        max-width: 110px !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        display: inline-block !important;
       }
       .pin-pill {
-        font-size: 0.7rem;
-        padding: 2px 6px;
+        font-size: 0.7rem !important;
+        padding: 2px 6px !important;
+        white-space: nowrap !important;
       }
       .chat-messages {
-        padding: 12px 10px;
-        gap: 8px;
+        padding: 12px 10px !important;
+        gap: 8px !important;
       }
       .msg-row {
-        max-width: 90%;
+        max-width: 90% !important;
       }
       .msg-bubble {
-        padding: 9px 13px;
-        font-size: 0.9rem;
+        padding: 9px 13px !important;
+        font-size: 0.9rem !important;
       }
       .chat-bottom {
-        padding: 10px 12px 14px 12px;
+        padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px)) 10px !important;
+      }
+      .btn-attach {
+        width: 40px !important;
+        height: 40px !important;
       }
       .chat-input {
-        padding: 10px 14px;
-        font-size: 0.92rem;
+        padding: 9px 12px !important;
+        font-size: 0.92rem !important;
+        min-width: 0 !important;
       }
       .btn-send {
-        padding: 0 16px;
+        padding: 0 12px !important;
+        height: 40px !important;
+      }
+      .btn-send span {
+        display: none !important; /* Hide 'Send' text on mobile, showing the clean airplane icon */
+      }
+      .chat-photo {
+        max-width: 220px !important;
+        max-height: 180px !important;
       }
 
       /* Clean Mobile Modal */
+      .modal-overlay {
+        padding: 12px !important;
+      }
       .lobby-modal {
-        max-width: 94%;
-        margin: 12px;
+        width: 100% !important;
+        max-width: 95vw !important;
+        max-height: 90dvh !important;
+        overflow-y: auto !important;
+        margin: 0 !important;
       }
       .modal-body {
-        padding: 18px 14px;
-        gap: 12px;
+        padding: 18px 14px !important;
+        gap: 12px !important;
+      }
+      .pin-input-field {
+        font-size: 1.5rem !important;
+        letter-spacing: 8px !important;
+        padding: 8px !important;
       }
     }
   </style>
