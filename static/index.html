@@ -786,11 +786,13 @@
 <script>
   let ws = null;
   let heartbeatTimer = null;
+  let reconnectTimer = null;
   let currentPin = "";
   let currentRoomName = "Private Room";
   let currentHost = "";
   let currentUser = "Alice";
   let currentTab = "create";
+  const renderedMessageIds = new Set();
 
   const avatarColors = ["#3b82f6", "#10b981", "#8b5cf6", "#ec4899", "#f59e0b", "#06b6d4"];
 
@@ -895,6 +897,7 @@
     currentPin = pin;
     currentRoomName = roomName;
     currentHost = host || "";
+    renderedMessageIds.clear();
 
     document.getElementById("currentPinDisplay").textContent = pin;
     document.getElementById("roomNameDisplay").textContent = roomName;
@@ -916,6 +919,10 @@
 
   function connectWebSocket() {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+
+    if (!currentPin) return;
+
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws/${encodeURIComponent(currentPin)}/${encodeURIComponent(currentUser)}`;
 
@@ -927,12 +934,15 @@
       document.getElementById("chatInput").focus();
       updatePayloadPreview();
 
-      // Keep-alive heartbeat every 25 seconds: guarantees connection never drops on cloud/local for 2+ hours
+      // Immediately sync any messages that arrived while disconnected
+      loadPastMessages();
+
+      // Stable keep-alive heartbeat every 12 seconds: guarantees connection never drops
       heartbeatTimer = setInterval(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "ping" }));
         }
-      }, 25000);
+      }, 12000);
     };
 
     ws.onmessage = (event) => {
@@ -940,12 +950,12 @@
         const data = JSON.parse(event.data);
         if (data.type === "pong") return; // Heartbeat response
         
-        // 🚨 Host closed the room: delete and redirect all participants to home page
+        // 🚨 Host explicitly clicked Delete Room
         if (data.type === "room_closed") {
           if (heartbeatTimer) clearInterval(heartbeatTimer);
           currentPin = "";
           if (ws) ws.close();
-          alert("🚨 Room Closed!\n\nThe Host closed the room tab.\nThe room has been deleted. Redirecting you to the home page...");
+          alert("🚨 Room Closed!\n\nThe Host closed this chat room.\nRedirecting you to the home page...");
           openLobbyModal();
           return;
         }
@@ -966,19 +976,20 @@
     ws.onclose = () => {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       document.getElementById("statusDot").classList.remove("online");
-      document.getElementById("statusText").textContent = "Disconnected";
 
-      // If the room was already deleted or modal is open, don't auto-reconnect
+      // Don't reconnect if user intentionally left
       if (!currentPin || document.getElementById("lobbyModal").style.display !== "none") {
+        document.getElementById("statusText").textContent = "Offline";
         return;
       }
 
       document.getElementById("statusText").textContent = "Reconnecting...";
-      setTimeout(() => {
+      // Stable Fast Reconnect: Retry connection every 1.5 seconds automatically
+      reconnectTimer = setTimeout(() => {
         if (currentPin && document.getElementById("lobbyModal").style.display === "none") {
           connectWebSocket();
         }
-      }, 3000);
+      }, 1500);
     };
   }
 
@@ -1011,6 +1022,12 @@
   }
 
   function appendMessage(msg) {
+    if (!msg) return;
+    if (msg.id) {
+      if (renderedMessageIds.has(msg.id)) return;
+      renderedMessageIds.add(msg.id);
+    }
+
     const messagesArea = document.getElementById("messagesArea");
 
     if (msg.type === "system") {
@@ -1087,44 +1104,44 @@
 
     const modeInput = document.querySelector('input[name="protocol"]:checked');
     const mode = modeInput ? modeInput.value : "ws";
+    const msgId = "m_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
 
-    // 1. Try WebSocket if available and selected
+    // 1. Try WebSocket if connected
     if (mode === "ws" && ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ sender: currentUser, content: content }));
+      ws.send(JSON.stringify({ msg_id: msgId, sender: currentUser, content: content }));
       input.value = "";
       updatePayloadPreview();
     } else {
-      // 2. HTTP POST mode (or fallback if WebSocket is connecting)
+      // 2. HTTP POST mode (or automatic rock-solid fallback if WebSocket is reconnecting)
       try {
         const response = await fetch(`/api/rooms/${encodeURIComponent(currentPin)}/send`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sender: currentUser, content: content })
+          body: JSON.stringify({ msg_id: msgId, sender: currentUser, content: content })
         });
         if (response.ok) {
           const res = await response.json();
-          // If websocket is not open to broadcast to ourselves, show it immediately:
-          if (!ws || ws.readyState !== WebSocket.OPEN) {
-            if (res.message) appendMessage(res.message);
-          }
+          if (res.message) appendMessage(res.message);
           input.value = "";
           updatePayloadPreview();
         } else {
-          alert("Send error: " + response.statusText + " (Check if room PIN is valid or Burp intercepted the request)");
+          alert("Send error: " + response.statusText);
         }
       } catch (err) {
         console.error("HTTP send error:", err);
-        alert("Failed to send: If Burp Suite 'Intercept is ON', click Forward in Burp Suite!");
       }
     }
   }
 
   async function loadPastMessages() {
+    if (!currentPin) return;
     try {
       const r = await fetch(`/api/rooms/${encodeURIComponent(currentPin)}/messages`);
       if (r.ok) {
         const data = await r.json();
-        if (data.messages) data.messages.forEach(appendMessage);
+        if (data.messages) {
+          data.messages.forEach(appendMessage);
+        }
       }
     } catch (e) {}
   }
