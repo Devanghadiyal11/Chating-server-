@@ -148,12 +148,14 @@ async def send_room_message(pin: str, msg: ChatMessagePayload, request: Request)
     room = manager.get_or_create(pin)
 
     message_id = msg.msg_id or f"m_{int(time.time()*1000)}_{random.randint(100, 999)}"
+    now_ms = int(time.time() * 1000)
     chat_item = {
         "id": message_id,
         "type": "chat",
         "sender": msg.sender,
         "content": msg.content,
         "timestamp": datetime.now().strftime("%H:%M:%S"),
+        "time_ms": now_ms,
         "client_ip": request.client.host if request.client else "unknown"
     }
     room.messages.append(chat_item)
@@ -255,7 +257,8 @@ async def websocket_room_endpoint(websocket: WebSocket, pin: str, username: str)
                 "type": "chat",
                 "sender": data.get("sender", username),
                 "content": data.get("content", ""),
-                "timestamp": datetime.now().strftime("%H:%M:%S")
+                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                "time_ms": int(time.time() * 1000)
             }
             room.messages.append(chat_item)
             await room.broadcast(chat_item)

@@ -1029,16 +1029,20 @@
     }
 
     const messagesArea = document.getElementById("messagesArea");
+    const msgTimeMs = Number(msg.time_ms) || Date.now();
 
+    let elementToInsert;
     if (msg.type === "system") {
       const sysDiv = document.createElement("div");
       sysDiv.className = "msg-system";
+      sysDiv.dataset.time = msgTimeMs;
       sysDiv.innerHTML = `<span>⚡</span> <span>[${msg.timestamp}] ${escapeHtml(msg.content)}</span>`;
-      messagesArea.appendChild(sysDiv);
+      elementToInsert = sysDiv;
     } else {
       const isMine = msg.sender === currentUser;
       const row = document.createElement("div");
       row.className = `msg-row ${isMine ? 'mine' : ''}`;
+      row.dataset.time = msgTimeMs;
 
       const avatarColor = getAvatarColor(msg.sender || "User");
       const initial = (msg.sender || "U").charAt(0).toUpperCase();
@@ -1053,7 +1057,27 @@
           <div class="msg-bubble">${escapeHtml(msg.content || "")}</div>
         </div>
       `;
-      messagesArea.appendChild(row);
+      elementToInsert = row;
+    }
+
+    // Strict Chronological Insertion:
+    // Guarantees all messages are ordered by exact timestamp from oldest to newest
+    const existing = Array.from(messagesArea.querySelectorAll("[data-time]"));
+    let inserted = false;
+    for (let i = existing.length - 1; i >= 0; i--) {
+      const prevTime = Number(existing[i].dataset.time || 0);
+      if (msgTimeMs >= prevTime) {
+        existing[i].after(elementToInsert);
+        inserted = true;
+        break;
+      }
+    }
+    if (!inserted) {
+      if (existing.length > 0 && msgTimeMs < Number(existing[0].dataset.time || 0)) {
+        existing[0].before(elementToInsert);
+      } else {
+        messagesArea.appendChild(elementToInsert);
+      }
     }
 
     messagesArea.scrollTop = messagesArea.scrollHeight;
