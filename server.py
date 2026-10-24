@@ -209,6 +209,11 @@ async def websocket_room_endpoint(websocket: WebSocket, pin: str, username: str)
     try:
         while True:
             data = await websocket.receive_json()
+            # Handle keep-alive heartbeat ping to prevent timeouts on 2+ hour chats
+            if data.get("type") == "ping":
+                await websocket.send_json({"type": "pong"})
+                continue
+
             chat_item = {
                 "type": "chat",
                 "sender": data.get("sender", username),

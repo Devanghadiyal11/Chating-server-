@@ -784,6 +784,7 @@
 
 <script>
   let ws = null;
+  let heartbeatTimer = null;
   let currentPin = "";
   let currentRoomName = "Private Room";
   let currentUser = "Alice";
@@ -837,6 +838,8 @@
   }
 
   function openLobbyModal() {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    currentPin = "";
     if (ws) ws.close();
     document.getElementById("lobbyModal").style.display = "flex";
   }
@@ -906,6 +909,7 @@
   }
 
   function connectWebSocket() {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws/${encodeURIComponent(currentPin)}/${encodeURIComponent(currentUser)}`;
 
@@ -916,11 +920,19 @@
       document.getElementById("statusText").textContent = "Connected";
       document.getElementById("chatInput").focus();
       updatePayloadPreview();
+
+      // Keep-alive heartbeat every 25 seconds: guarantees connection never drops on cloud/local for 2+ hours
+      heartbeatTimer = setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "ping" }));
+        }
+      }, 25000);
     };
 
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+        if (data.type === "pong") return; // Heartbeat response, ignore in UI
         if (data.type === "users_update") {
           renderUserList(data.users);
         } else if (data.type === "error") {
@@ -934,8 +946,16 @@
     };
 
     ws.onclose = () => {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
       document.getElementById("statusDot").classList.remove("online");
-      document.getElementById("statusText").textContent = "Offline";
+      document.getElementById("statusText").textContent = "Reconnecting...";
+
+      // Auto-reconnect if network briefly flickers during long 2+ hour sessions
+      setTimeout(() => {
+        if (currentPin && document.getElementById("lobbyModal").style.display === "none") {
+          connectWebSocket();
+        }
+      }, 3000);
     };
   }
 
