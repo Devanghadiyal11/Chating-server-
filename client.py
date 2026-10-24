@@ -16,6 +16,13 @@ import argparse
 import threading
 import requests
 
+# Ensure Windows terminal doesn't crash on unicode/emoji
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 def run_http_client(username: str, pin: str, server_url: str = "http://127.0.0.1:8000", proxy: str = None):
     proxies = {"http": proxy, "https": proxy} if proxy else None
     print(f"\n[+] Started HTTP Chat Client as '{username}' in Room PIN '{pin}'")

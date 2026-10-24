@@ -682,9 +682,10 @@
     </div>
 
     <!-- Sidebar Footer -->
-    <div class="sidebar-footer">
-      <button class="btn-secondary" onclick="clearRoomChat()">🗑️ Clear Room</button>
-      <button class="btn-secondary" onclick="openLobbyModal()">🚪 Leave / Change PIN</button>
+    <div class="sidebar-footer" style="flex-wrap: wrap;">
+      <button class="btn-secondary" onclick="clearRoomChat()">🗑️ Clear</button>
+      <button class="btn-secondary" id="hostCloseBtn" style="display:none; color: var(--danger); border-color: rgba(239,68,68,0.4);" onclick="hostCloseRoom()">🛑 Delete Room</button>
+      <button class="btn-secondary" onclick="openLobbyModal()">🚪 Leave</button>
     </div>
   </aside>
 
@@ -906,6 +907,9 @@
     document.getElementById("messagesArea").innerHTML = "";
     document.getElementById("lobbyModal").style.display = "none";
 
+    const isHost = (currentUser === currentHost);
+    document.getElementById("hostCloseBtn").style.display = isHost ? "block" : "none";
+
     connectWebSocket();
     loadPastMessages();
   }
@@ -1081,13 +1085,16 @@
     const content = input.value.trim();
     if (!content) return;
 
-    const mode = document.querySelector('input[name="protocol"]:checked').value;
+    const modeInput = document.querySelector('input[name="protocol"]:checked');
+    const mode = modeInput ? modeInput.value : "ws";
 
+    // 1. Try WebSocket if available and selected
     if (mode === "ws" && ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ sender: currentUser, content: content }));
       input.value = "";
       updatePayloadPreview();
     } else {
+      // 2. HTTP POST mode (or fallback if WebSocket is connecting)
       try {
         const response = await fetch(`/api/rooms/${encodeURIComponent(currentPin)}/send`, {
           method: "POST",
@@ -1095,13 +1102,19 @@
           body: JSON.stringify({ sender: currentUser, content: content })
         });
         if (response.ok) {
+          const res = await response.json();
+          // If websocket is not open to broadcast to ourselves, show it immediately:
+          if (!ws || ws.readyState !== WebSocket.OPEN) {
+            if (res.message) appendMessage(res.message);
+          }
           input.value = "";
           updatePayloadPreview();
         } else {
-          alert("Send error: " + response.statusText);
+          alert("Send error: " + response.statusText + " (Check if room PIN is valid or Burp intercepted the request)");
         }
       } catch (err) {
         console.error("HTTP send error:", err);
+        alert("Failed to send: If Burp Suite 'Intercept is ON', click Forward in Burp Suite!");
       }
     }
   }
@@ -1121,6 +1134,20 @@
     try {
       await fetch(`/api/rooms/${encodeURIComponent(currentPin)}/messages`, { method: "DELETE" });
       document.getElementById("messagesArea").innerHTML = `<div class="msg-system">Room messages cleared.</div>`;
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function hostCloseRoom() {
+    if (!confirm("Are you sure you want to close and permanently delete this room for all connected participants?")) return;
+    try {
+      await fetch(`/api/rooms/${encodeURIComponent(currentPin)}/close`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sender: currentUser, content: "close" })
+      });
+      openLobbyModal();
     } catch (e) {
       console.error(e);
     }

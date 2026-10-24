@@ -142,6 +142,27 @@ async def send_room_message(pin: str, msg: ChatMessagePayload, request: Request)
     await room.broadcast(chat_item)
     return {"status": "success", "message": chat_item}
 
+@app.post("/api/rooms/{pin}/close")
+async def close_room_immediately(pin: str, msg: ChatMessagePayload):
+    """Host can explicitly close the room immediately"""
+    room = manager.get_room(pin)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    closed_event = {
+        "type": "room_closed",
+        "content": f"The Host ({msg.sender}) closed the room.",
+        "timestamp": datetime.now().strftime("%H:%M:%S")
+    }
+    await room.broadcast(closed_event)
+    for client_user, ws in list(room.connections.items()):
+        try:
+            await ws.close(code=1000)
+        except Exception:
+            pass
+    manager.delete_room(pin)
+    return {"status": "closed"}
+
 @app.delete("/api/rooms/{pin}/messages")
 async def clear_room_messages(pin: str):
     room = manager.get_room(pin)
@@ -192,7 +213,7 @@ async def websocket_room_endpoint(websocket: WebSocket, pin: str, username: str)
     join_msg = {
         "type": "system",
         "sender": "System",
-        "content": f"{username} {'(👑 Host)' if is_host else ''} joined the chat.",
+        "content": f"{username} {'(Host)' if is_host else ''} joined the chat.",
         "timestamp": datetime.now().strftime("%H:%M:%S")
     }
     room.messages.append(join_msg)
@@ -218,25 +239,28 @@ async def websocket_room_endpoint(websocket: WebSocket, pin: str, username: str)
         if username in room.connections:
             del room.connections[username]
 
-        # 👑 IF THE HOST DISCONNECTS / CLOSES TAB:
+        # 👑 IF THE HOST DISCONNECTS:
         if username == room.host and clean_pin != "general":
-            # 1. Notify all remaining participants that room is closed
-            closed_event = {
-                "type": "room_closed",
-                "content": f"The Host ({username}) closed the chat tab. The room has been deleted.",
-                "timestamp": datetime.now().strftime("%H:%M:%S")
-            }
-            await room.broadcast(closed_event)
+            # Give a 15-second grace period for reload or reconnect:
+            async def delayed_host_cleanup():
+                await asyncio.sleep(15)
+                # If host hasn't reconnected after 15 seconds, close & delete room
+                current_room = manager.get_room(clean_pin)
+                if current_room and current_room.host not in current_room.connections:
+                    closed_event = {
+                        "type": "room_closed",
+                        "content": f"The Host ({username}) left the chat. Room has been closed.",
+                        "timestamp": datetime.now().strftime("%H:%M:%S")
+                    }
+                    await current_room.broadcast(closed_event)
+                    for client_user, ws in list(current_room.connections.items()):
+                        try:
+                            await ws.close(code=1000)
+                        except Exception:
+                            pass
+                    manager.delete_room(clean_pin)
 
-            # 2. Close all client connections
-            for client_user, ws in list(room.connections.items()):
-                try:
-                    await ws.close(code=1000)
-                except Exception:
-                    pass
-
-            # 3. Delete room completely from memory
-            manager.delete_room(clean_pin)
+            asyncio.create_task(delayed_host_cleanup())
         else:
             # Regular user disconnected
             leave_msg = {
