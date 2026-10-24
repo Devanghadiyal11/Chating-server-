@@ -2,7 +2,7 @@ import asyncio
 import random
 from datetime import datetime
 from typing import List, Dict, Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -14,10 +14,11 @@ app = FastAPI(title="Burp Suite Chat Lab Server")
 # --- Room & Connection Management ---
 
 class Room:
-    def __init__(self, room_id: str, room_name: str, pin: str):
+    def __init__(self, room_id: str, room_name: str, pin: str, host: str = "Admin"):
         self.room_id = room_id  # Pin acts as room_id
         self.pin = pin
         self.room_name = room_name
+        self.host = host  # Username of the room creator (Host)
         self.connections: Dict[str, WebSocket] = {}
         self.messages: List[Dict] = []
 
@@ -31,7 +32,8 @@ class Room:
     async def broadcast_users(self):
         msg = {
             "type": "users_update",
-            "users": list(self.connections.keys())
+            "users": list(self.connections.keys()),
+            "host": self.host
         }
         await self.broadcast(msg)
 
@@ -39,7 +41,7 @@ class RoomManager:
     def __init__(self):
         self.rooms: Dict[str, Room] = {}
         # Default public lobby room
-        self.rooms["general"] = Room("general", "General Public Chat", "0000")
+        self.rooms["general"] = Room("general", "General Public Chat", "0000", host="System")
 
     def generate_pin(self) -> str:
         """Generate unique 4-digit PIN (1000 to 9999)"""
@@ -52,14 +54,18 @@ class RoomManager:
     def get_room(self, room_id: str) -> Optional[Room]:
         return self.rooms.get(room_id.strip())
 
+    def delete_room(self, room_id: str):
+        if room_id in self.rooms:
+            del self.rooms[room_id]
+
 manager = RoomManager()
 
 # --- Pydantic Request Models ---
 
 class CreateRoomRequest(BaseModel):
     room_name: Optional[str] = "Private Chat"
-    creator: Optional[str] = "User"
-    custom_pin: Optional[str] = None  # Optional custom 4-digit pin
+    creator: Optional[str] = "Host"
+    custom_pin: Optional[str] = None
 
 class JoinRoomRequest(BaseModel):
     pin: str
@@ -69,72 +75,58 @@ class ChatMessagePayload(BaseModel):
     sender: str
     content: str
 
-# --- REST Endpoints (Great for Burp Suite Interception, Intruder & Repeater) ---
+# --- REST Endpoints ---
 
 @app.post("/api/rooms/create")
 async def create_room(req: CreateRoomRequest):
     """
-    Creates a new private room and generates a 4-digit PIN.
-    Burp testing: Analyze entropy of generated PINs or specify arbitrary custom PINs.
+    Creates a new private room with the specified creator as the Host.
     """
     if req.custom_pin and req.custom_pin.strip():
         pin = req.custom_pin.strip()
     else:
         pin = manager.generate_pin()
 
-    if pin in manager.rooms:
-        return {"status": "exists", "pin": pin, "room_name": manager.rooms[pin].room_name}
-
+    creator_name = req.creator.strip() if req.creator else "Host"
     name = req.room_name.strip() if req.room_name else f"Room #{pin}"
-    room = Room(room_id=pin, room_name=name, pin=pin)
+    room = Room(room_id=pin, room_name=name, pin=pin, host=creator_name)
     manager.rooms[pin] = room
 
     return {
         "status": "created",
         "pin": pin,
         "room_name": name,
-        "message": f"Room created successfully! Share 4-digit PIN: {pin}"
+        "host": creator_name,
+        "message": f"Room created successfully! Host is '{creator_name}'."
     }
 
 @app.post("/api/rooms/join")
 async def join_room(req: JoinRoomRequest):
-    """
-    Verifies if a 4-digit PIN exists.
-    Burp Intruder Exercise:
-    Since PIN is 4 digits (0000-9999), you can use Burp Intruder to brute force active room PINs!
-    """
     pin = req.pin.strip()
     room = manager.get_room(pin)
     if not room:
         raise HTTPException(
             status_code=404, 
-            detail=f"Room with PIN '{pin}' not found! Check the PIN and try again."
+            detail=f"Room with PIN '{pin}' does not exist or was closed by the host."
         )
 
     return {
         "status": "authorized",
         "pin": room.pin,
         "room_name": room.room_name,
+        "host": room.host,
         "username": req.username
     }
 
 @app.get("/api/rooms/{pin}/messages")
 async def get_room_messages(pin: str):
-    """
-    Retrieve message history for room with this 4-digit PIN.
-    Burp Exercise: Test IDOR by changing the PIN in the URL.
-    """
     room = manager.get_room(pin)
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
-    return {"pin": room.pin, "room_name": room.room_name, "messages": room.messages}
+    return {"pin": room.pin, "room_name": room.room_name, "host": room.host, "messages": room.messages}
 
 @app.post("/api/rooms/{pin}/send")
 async def send_room_message(pin: str, msg: ChatMessagePayload, request: Request):
-    """
-    Send a message via HTTP POST into a room using its 4-digit PIN.
-    Burp Exercise: Intercept and alter sender name or message contents.
-    """
     room = manager.get_room(pin)
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
@@ -166,7 +158,7 @@ async def clear_room_messages(pin: str):
     await room.broadcast(clear_msg)
     return {"status": "cleared"}
 
-# Legacy endpoints for backward compatibility
+# Legacy endpoints
 @app.get("/api/messages")
 async def legacy_get_messages():
     return await get_room_messages("general")
@@ -189,17 +181,18 @@ async def websocket_room_endpoint(websocket: WebSocket, pin: str, username: str)
 
     if not room:
         await websocket.accept()
-        await websocket.send_json({"type": "error", "content": f"Room with PIN {clean_pin} does not exist."})
+        await websocket.send_json({"type": "error", "content": f"Room with PIN {clean_pin} does not exist or was closed."})
         await websocket.close(code=4004)
         return
 
     await websocket.accept()
     room.connections[username] = websocket
 
+    is_host = (username == room.host)
     join_msg = {
         "type": "system",
         "sender": "System",
-        "content": f"{username} joined the chat.",
+        "content": f"{username} {'(👑 Host)' if is_host else ''} joined the chat.",
         "timestamp": datetime.now().strftime("%H:%M:%S")
     }
     room.messages.append(join_msg)
@@ -209,7 +202,6 @@ async def websocket_room_endpoint(websocket: WebSocket, pin: str, username: str)
     try:
         while True:
             data = await websocket.receive_json()
-            # Handle keep-alive heartbeat ping to prevent timeouts on 2+ hour chats
             if data.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})
                 continue
@@ -225,15 +217,37 @@ async def websocket_room_endpoint(websocket: WebSocket, pin: str, username: str)
     except WebSocketDisconnect:
         if username in room.connections:
             del room.connections[username]
-        leave_msg = {
-            "type": "system",
-            "sender": "System",
-            "content": f"{username} left the chat.",
-            "timestamp": datetime.now().strftime("%H:%M:%S")
-        }
-        room.messages.append(leave_msg)
-        await room.broadcast(leave_msg)
-        await room.broadcast_users()
+
+        # 👑 IF THE HOST DISCONNECTS / CLOSES TAB:
+        if username == room.host and clean_pin != "general":
+            # 1. Notify all remaining participants that room is closed
+            closed_event = {
+                "type": "room_closed",
+                "content": f"The Host ({username}) closed the chat tab. The room has been deleted.",
+                "timestamp": datetime.now().strftime("%H:%M:%S")
+            }
+            await room.broadcast(closed_event)
+
+            # 2. Close all client connections
+            for client_user, ws in list(room.connections.items()):
+                try:
+                    await ws.close(code=1000)
+                except Exception:
+                    pass
+
+            # 3. Delete room completely from memory
+            manager.delete_room(clean_pin)
+        else:
+            # Regular user disconnected
+            leave_msg = {
+                "type": "system",
+                "sender": "System",
+                "content": f"{username} left the chat.",
+                "timestamp": datetime.now().strftime("%H:%M:%S")
+            }
+            room.messages.append(leave_msg)
+            await room.broadcast(leave_msg)
+            await room.broadcast_users()
 
 @app.websocket("/ws/{username}")
 async def legacy_websocket_endpoint(websocket: WebSocket, username: str):
@@ -254,7 +268,7 @@ async def get_index():
 
 if __name__ == "__main__":
     print("==================================================================")
-    print("  Burp Suite Chat Lab Server (4-Digit PIN Rooms)")
+    print("  Burp Suite Chat Lab Server (Host Auto-Delete Rooms)")
     print("  Local access:    http://127.0.0.1:8000")
     print("  Network access:  http://0.0.0.0:8000")
     print("  Press Ctrl + C to stop.")

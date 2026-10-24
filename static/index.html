@@ -787,6 +787,7 @@
   let heartbeatTimer = null;
   let currentPin = "";
   let currentRoomName = "Private Room";
+  let currentHost = "";
   let currentUser = "Alice";
   let currentTab = "create";
 
@@ -860,7 +861,7 @@
         });
         const data = await resp.json();
         if (resp.ok) {
-          enterRoom(data.pin, data.room_name);
+          enterRoom(data.pin, data.room_name, data.host);
         } else {
           showError(data.detail || "Failed to create room");
         }
@@ -879,7 +880,7 @@
         });
         const data = await resp.json();
         if (resp.ok) {
-          enterRoom(data.pin, data.room_name);
+          enterRoom(data.pin, data.room_name, data.host);
         } else {
           showError(data.detail || "Room with this PIN was not found");
         }
@@ -889,9 +890,10 @@
     }
   }
 
-  function enterRoom(pin, roomName) {
+  function enterRoom(pin, roomName, host) {
     currentPin = pin;
     currentRoomName = roomName;
+    currentHost = host || "";
 
     document.getElementById("currentPinDisplay").textContent = pin;
     document.getElementById("roomNameDisplay").textContent = roomName;
@@ -932,9 +934,21 @@
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type === "pong") return; // Heartbeat response, ignore in UI
+        if (data.type === "pong") return; // Heartbeat response
+        
+        // 🚨 Host closed the room: delete and redirect all participants to home page
+        if (data.type === "room_closed") {
+          if (heartbeatTimer) clearInterval(heartbeatTimer);
+          currentPin = "";
+          if (ws) ws.close();
+          alert("🚨 Room Closed!\n\nThe Host closed the room tab.\nThe room has been deleted. Redirecting you to the home page...");
+          openLobbyModal();
+          return;
+        }
+
         if (data.type === "users_update") {
-          renderUserList(data.users);
+          currentHost = data.host || currentHost;
+          renderUserList(data.users, currentHost);
         } else if (data.type === "error") {
           alert("Room error: " + data.content);
         } else {
@@ -948,9 +962,14 @@
     ws.onclose = () => {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       document.getElementById("statusDot").classList.remove("online");
-      document.getElementById("statusText").textContent = "Reconnecting...";
+      document.getElementById("statusText").textContent = "Disconnected";
 
-      // Auto-reconnect if network briefly flickers during long 2+ hour sessions
+      // If the room was already deleted or modal is open, don't auto-reconnect
+      if (!currentPin || document.getElementById("lobbyModal").style.display !== "none") {
+        return;
+      }
+
+      document.getElementById("statusText").textContent = "Reconnecting...";
       setTimeout(() => {
         if (currentPin && document.getElementById("lobbyModal").style.display === "none") {
           connectWebSocket();
@@ -959,7 +978,7 @@
     };
   }
 
-  function renderUserList(users) {
+  function renderUserList(users, host) {
     const list = document.getElementById("activeUsersList");
     const count = document.getElementById("userCount");
     count.textContent = users.length;
@@ -974,9 +993,14 @@
       const div = document.createElement("div");
       div.className = "user-item";
       const isMe = user === currentUser;
+      const isHost = user === host;
       div.innerHTML = `
         <span class="dot"></span>
-        <span>${escapeHtml(user)} ${isMe ? '<b style="color:var(--accent);">(You)</b>' : ''}</span>
+        <span>
+          ${escapeHtml(user)} 
+          ${isHost ? '<b style="color:#fbbf24; font-size:0.75rem;">(👑 Host)</b>' : ''}
+          ${isMe ? '<b style="color:var(--accent); font-size:0.75rem;">(You)</b>' : ''}
+        </span>
       `;
       list.appendChild(div);
     });
