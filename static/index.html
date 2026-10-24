@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Burp Suite Security Lab - Multi-Client Chat</title>
+  <title>Burp Suite Security Lab - Private Chat Rooms</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
@@ -14,11 +14,9 @@
       --bg-card: #1e293b;
       --bg-card-hover: #26334d;
       --border: #334155;
-      --border-accent: #3b82f6;
       --text-main: #f8fafc;
       --text-muted: #94a3b8;
       --accent: #38bdf8;
-      --accent-rgb: 56, 189, 248;
       --accent-glow: rgba(56, 189, 248, 0.25);
       --success: #10b981;
       --warning: #f59e0b;
@@ -36,7 +34,6 @@
       display: flex;
     }
 
-    /* App Layout */
     .app-layout {
       display: flex;
       width: 100vw;
@@ -45,7 +42,7 @@
 
     /* Sidebar */
     .sidebar {
-      width: 310px;
+      width: 320px;
       background: var(--bg-dark);
       border-right: 1px solid var(--border);
       display: flex;
@@ -55,7 +52,7 @@
     }
 
     .brand-header {
-      padding: 18px 20px;
+      padding: 16px 20px;
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
@@ -63,8 +60,8 @@
       background: rgba(15, 23, 42, 0.9);
     }
     .brand-icon {
-      width: 36px;
-      height: 36px;
+      width: 38px;
+      height: 38px;
       border-radius: 10px;
       background: linear-gradient(135deg, #ff6633 0%, #ea580c 100%);
       display: flex;
@@ -74,62 +71,67 @@
       font-weight: 700;
       box-shadow: 0 4px 12px rgba(255, 102, 51, 0.3);
     }
-    .brand-text h1 {
-      font-size: 0.98rem;
-      font-weight: 700;
-      letter-spacing: -0.3px;
-      color: #fff;
-    }
-    .brand-text span {
-      font-size: 0.72rem;
-      color: var(--accent);
-      font-weight: 500;
-    }
+    .brand-text h1 { font-size: 0.98rem; font-weight: 700; color: #fff; }
+    .brand-text span { font-size: 0.72rem; color: var(--accent); font-weight: 500; }
 
-    /* User Profile Card in Sidebar */
-    .user-profile-card {
-      padding: 14px 18px;
+    /* Current Room Info Card in Sidebar */
+    .room-info-card {
       margin: 14px;
-      border-radius: 10px;
+      padding: 14px;
       background: var(--bg-card);
       border: 1px solid var(--border);
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .room-id-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      background: rgba(15, 23, 42, 0.7);
+      padding: 4px 8px;
+      border-radius: 4px;
+      color: var(--accent);
       display: flex;
       align-items: center;
       justify-content: space-between;
     }
+    .copy-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.72rem;
+    }
+    .copy-btn:hover { color: #fff; }
+
+    .user-profile-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-top: 1px solid var(--border);
+      padding-top: 8px;
+      margin-top: 4px;
+    }
     .profile-info {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
     }
     .user-avatar {
-      width: 34px;
-      height: 34px;
+      width: 28px;
+      height: 28px;
       border-radius: 50%;
       background: #3b82f6;
       display: flex;
       align-items: center;
       justify-content: center;
       font-weight: 700;
-      font-size: 0.85rem;
-      text-transform: uppercase;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-    }
-    .profile-details .username {
-      font-weight: 600;
-      font-size: 0.88rem;
-      color: var(--text-main);
-    }
-    .profile-details .status-indicator {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 0.72rem;
-      color: var(--text-muted);
+      font-size: 0.8rem;
     }
     .status-dot {
-      width: 7px;
-      height: 7px;
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
       background: var(--danger);
     }
@@ -138,7 +140,6 @@
       box-shadow: 0 0 8px var(--success);
     }
 
-    /* Sidebar Navigation / Sections */
     .sidebar-scrollable {
       flex: 1;
       overflow-y: auto;
@@ -164,34 +165,24 @@
     .mode-card {
       background: var(--bg-card);
       border-radius: 8px;
-      padding: 10px;
+      padding: 8px;
       border: 1px solid var(--border);
-    }
-    .mode-options {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
     }
     .mode-label {
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 8px 10px;
+      padding: 6px 8px;
       border-radius: 6px;
-      font-size: 0.82rem;
+      font-size: 0.8rem;
       cursor: pointer;
       transition: background 0.15s;
     }
-    .mode-label:hover {
-      background: var(--bg-card-hover);
-    }
-    .mode-label input[type="radio"] {
-      accent-color: var(--accent);
-      cursor: pointer;
-    }
+    .mode-label:hover { background: var(--bg-card-hover); }
+    .mode-label input[type="radio"] { accent-color: var(--accent); }
     .mode-tag {
       margin-left: auto;
-      font-size: 0.68rem;
+      font-size: 0.65rem;
       padding: 2px 6px;
       border-radius: 4px;
       font-family: 'JetBrains Mono', monospace;
@@ -233,7 +224,6 @@
       font-size: 0.72rem;
       color: #fed7aa;
       margin-bottom: 8px;
-      line-height: 1.3;
     }
     .payload-buttons {
       display: flex;
@@ -265,20 +255,16 @@
     }
     .btn-secondary {
       flex: 1;
-      padding: 8px 12px;
+      padding: 8px 10px;
       border-radius: 6px;
       background: var(--bg-card);
       border: 1px solid var(--border);
       color: var(--text-muted);
-      font-size: 0.78rem;
+      font-size: 0.76rem;
       font-weight: 500;
       cursor: pointer;
-      transition: all 0.2s;
     }
-    .btn-secondary:hover {
-      background: var(--bg-card-hover);
-      color: var(--text-main);
-    }
+    .btn-secondary:hover { background: var(--bg-card-hover); color: var(--text-main); }
 
     /* Main Chat Area */
     .chat-main {
@@ -289,26 +275,28 @@
       background: var(--bg-darker);
     }
 
-    /* Chat Header */
     .chat-header {
-      padding: 16px 24px;
+      padding: 14px 24px;
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
       justify-content: space-between;
       background: var(--bg-dark);
     }
-    .chat-header-info {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
     .room-badge {
       font-size: 1.05rem;
       font-weight: 700;
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
+    }
+    .lock-badge {
+      font-size: 0.7rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(245, 158, 11, 0.2);
+      color: #f59e0b;
+      border: 1px solid rgba(245, 158, 11, 0.3);
     }
     .active-protocol-badge {
       font-size: 0.72rem;
@@ -330,11 +318,6 @@
       border: 1px solid rgba(245, 158, 11, 0.3);
       color: #fbbf24;
     }
-    .header-actions {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
 
     /* Messages Container */
     .chat-messages {
@@ -346,7 +329,6 @@
       gap: 14px;
     }
 
-    /* System Messages */
     .msg-system {
       align-self: center;
       padding: 5px 14px;
@@ -360,16 +342,15 @@
       gap: 6px;
     }
 
-    /* Chat Bubbles */
     .msg-row {
       display: flex;
       align-items: flex-start;
       gap: 10px;
       max-width: 75%;
-      animation: fadeIn 0.2s ease-out;
+      animation: fadeIn 0.15s ease-out;
     }
     @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(6px); }
+      from { opacity: 0; transform: translateY(4px); }
       to { opacity: 1; transform: translateY(0); }
     }
     .msg-row.mine {
@@ -389,28 +370,12 @@
       justify-content: center;
       flex-shrink: 0;
     }
-    .msg-content-wrapper {
-      display: flex;
-      flex-direction: column;
-      gap: 3px;
-    }
-    .msg-header {
-      display: flex;
-      align-items: baseline;
-      gap: 8px;
-    }
-    .msg-sender {
-      font-size: 0.82rem;
-      font-weight: 600;
-      color: #94a3b8;
-    }
-    .msg-time {
-      font-size: 0.68rem;
-      color: #64748b;
-      font-family: 'JetBrains Mono', monospace;
-    }
+    .msg-content-wrapper { display: flex; flex-direction: column; gap: 3px; }
+    .msg-header { display: flex; align-items: baseline; gap: 8px; }
+    .msg-sender { font-size: 0.82rem; font-weight: 600; color: #94a3b8; }
+    .msg-time { font-size: 0.68rem; color: #64748b; font-family: 'JetBrains Mono', monospace; }
     .msg-bubble {
-      padding: 11px 16px;
+      padding: 10px 15px;
       border-radius: 12px;
       font-size: 0.92rem;
       line-height: 1.45;
@@ -425,13 +390,11 @@
       color: #ffffff;
       border-top-right-radius: 2px;
     }
-    .msg-row:not(.mine) .msg-bubble {
-      border-top-left-radius: 2px;
-    }
+    .msg-row:not(.mine) .msg-bubble { border-top-left-radius: 2px; }
 
-    /* Chat Input Area */
+    /* Input Area */
     .chat-bottom {
-      padding: 16px 24px;
+      padding: 14px 24px;
       background: var(--bg-dark);
       border-top: 1px solid var(--border);
       display: flex;
@@ -451,25 +414,18 @@
       align-items: center;
       justify-content: space-between;
     }
-    .payload-preview .method-tag {
-      color: var(--burp-orange);
-      font-weight: 700;
-    }
+    .payload-preview .method-tag { color: var(--burp-orange); font-weight: 700; }
 
-    .input-form {
-      display: flex;
-      gap: 10px;
-    }
+    .input-form { display: flex; gap: 10px; }
     .chat-input {
       flex: 1;
-      padding: 12px 18px;
+      padding: 11px 16px;
       background: var(--bg-darker);
       border: 1px solid var(--border);
       border-radius: 8px;
       color: white;
       font-size: 0.95rem;
       outline: none;
-      transition: border 0.2s, box-shadow 0.2s;
     }
     .chat-input:focus {
       border-color: var(--accent);
@@ -487,81 +443,96 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      transition: filter 0.2s;
-    }
-    .btn-send:hover {
-      filter: brightness(1.15);
     }
 
-    /* Modal Overlay for Join */
+    /* Modal / Lobby Overlay */
     .modal-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(9, 13, 22, 0.85);
+      background: rgba(9, 13, 22, 0.88);
       backdrop-filter: blur(8px);
       display: flex;
       align-items: center;
       justify-content: center;
       z-index: 100;
     }
-    .join-modal {
+    .lobby-modal {
       background: var(--bg-card);
       border: 1px solid var(--border);
       box-shadow: 0 20px 40px rgba(0,0,0,0.6);
       border-radius: 14px;
-      padding: 32px;
       width: 100%;
-      max-width: 440px;
+      max-width: 480px;
+      overflow: hidden;
       display: flex;
       flex-direction: column;
-      gap: 20px;
     }
-    .join-modal h2 {
-      font-size: 1.3rem;
-      font-weight: 700;
-      color: #fff;
+    .modal-tabs {
       display: flex;
-      align-items: center;
-      gap: 10px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-dark);
     }
-    .join-modal p {
-      font-size: 0.85rem;
+    .tab-btn {
+      flex: 1;
+      padding: 14px;
+      background: none;
+      border: none;
       color: var(--text-muted);
-      line-height: 1.45;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .tab-btn.active {
+      color: var(--accent);
+      border-bottom: 2px solid var(--accent);
+      background: var(--bg-card);
+    }
+
+    .modal-body {
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .form-group label {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+    .form-input {
+      padding: 10px 14px;
+      background: var(--bg-dark);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: white;
+      font-size: 0.9rem;
+      outline: none;
+    }
+    .form-input:focus {
+      border-color: var(--accent);
     }
     .quick-users {
       display: flex;
-      gap: 8px;
+      gap: 6px;
+      margin-top: 4px;
     }
     .quick-user-btn {
       flex: 1;
-      padding: 8px;
-      border-radius: 6px;
+      padding: 5px;
+      border-radius: 4px;
       background: var(--bg-dark);
       border: 1px solid var(--border);
       color: var(--accent);
-      font-weight: 600;
-      font-size: 0.82rem;
+      font-size: 0.75rem;
       cursor: pointer;
-      transition: background 0.15s;
     }
-    .quick-user-btn:hover {
-      background: var(--bg-card-hover);
-    }
-    .join-input {
-      padding: 12px 16px;
-      background: var(--bg-dark);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      color: white;
-      font-size: 0.95rem;
-      outline: none;
-    }
-    .join-input:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px var(--accent-glow);
-    }
-    .btn-join {
+    .btn-submit {
       padding: 12px;
       border-radius: 8px;
       border: none;
@@ -570,6 +541,16 @@
       font-weight: 600;
       font-size: 0.95rem;
       cursor: pointer;
+      margin-top: 6px;
+    }
+    .modal-error {
+      font-size: 0.78rem;
+      color: var(--danger);
+      background: rgba(239, 68, 68, 0.1);
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      display: none;
     }
   </style>
 </head>
@@ -582,20 +563,30 @@
       <div class="brand-icon">BP</div>
       <div class="brand-text">
         <h1>Burp Suite Lab</h1>
-        <span>Multi-Client Chat</span>
+        <span>Private Chat Rooms</span>
       </div>
     </div>
 
-    <!-- Active User Profile Card -->
-    <div class="user-profile-card">
-      <div class="profile-info">
-        <div class="user-avatar" id="myAvatar">?</div>
-        <div class="profile-details">
-          <div class="username" id="myUsernameDisplay">Not connected</div>
-          <div class="status-indicator">
-            <span class="status-dot" id="statusDot"></span>
-            <span id="statusText">Offline</span>
-          </div>
+    <!-- Active Room & User Info Card -->
+    <div class="room-info-card">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-size: 0.75rem; color: var(--text-muted);">Current Room:</span>
+        <span id="roomLockStatus" class="lock-badge" style="display:none;">🔒 Protected</span>
+      </div>
+      <div style="font-weight: 700; font-size: 0.95rem;" id="roomNameDisplay">General Chat</div>
+      <div class="room-id-tag">
+        <span>ID: <b id="roomIdDisplay">general</b></span>
+        <button class="copy-btn" onclick="copyRoomId()">📋 Copy ID</button>
+      </div>
+
+      <div class="user-profile-bar">
+        <div class="profile-info">
+          <div class="user-avatar" id="myAvatar">?</div>
+          <span style="font-size: 0.82rem; font-weight: 600;" id="myUsernameDisplay">User</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <span class="status-dot" id="statusDot"></span>
+          <span style="font-size: 0.72rem; color: var(--text-muted);" id="statusText">Offline</span>
         </div>
       </div>
     </div>
@@ -603,83 +594,77 @@
     <div class="sidebar-scrollable">
       <!-- Protocol Switcher -->
       <div>
-        <div class="section-title">Burp Intercept Target</div>
+        <div class="section-title">Burp Intercept Mode</div>
         <div class="mode-card">
-          <div class="mode-options">
-            <label class="mode-label">
-              <input type="radio" name="protocol" value="ws" checked onchange="updateProtocolMode()">
-              <span>WebSocket</span>
-              <span class="mode-tag tag-ws">WS Tab</span>
-            </label>
-            <label class="mode-label">
-              <input type="radio" name="protocol" value="http" onchange="updateProtocolMode()">
-              <span>HTTP POST</span>
-              <span class="mode-tag tag-http">HTTP Proxy</span>
-            </label>
-          </div>
+          <label class="mode-label">
+            <input type="radio" name="protocol" value="ws" checked onchange="updateProtocolMode()">
+            <span>WebSocket</span>
+            <span class="mode-tag tag-ws">WS Tab</span>
+          </label>
+          <label class="mode-label">
+            <input type="radio" name="protocol" value="http" onchange="updateProtocolMode()">
+            <span>HTTP POST</span>
+            <span class="mode-tag tag-http">HTTP Proxy</span>
+          </label>
         </div>
       </div>
 
-      <!-- Quick Payloads for Burp Testing -->
+      <!-- Quick Test Payloads -->
       <div>
         <div class="section-title">Quick Test Payloads</div>
         <div class="payload-box">
-          <p>Click to insert into chat box, then intercept in Burp Suite:</p>
+          <p>Click to insert and intercept in Burp:</p>
           <div class="payload-buttons">
             <button class="payload-btn" onclick="insertPayload('<script>alert(1)</script>')">XSS alert()</button>
-            <button class="payload-btn" onclick="insertPayload('<b>Important Announcement</b>')">HTML Bold</button>
-            <button class="payload-btn" onclick="insertPayload('\' OR \'1\'=\'1')">SQLi String</button>
-            <button class="payload-btn" onclick="insertPayload('System: You have won $10,000!')">Spoof Text</button>
+            <button class="payload-btn" onclick="insertPayload('<b>Important</b>')">HTML Bold</button>
+            <button class="payload-btn" onclick="insertPayload('\' OR 1=1--')">SQLi String</button>
+            <button class="payload-btn" onclick="insertPayload('System: Room Access Granted')">Spoof Text</button>
           </div>
         </div>
       </div>
 
-      <!-- Online Users List -->
+      <!-- Room Online Users -->
       <div>
         <div class="section-title">
-          <span>Active Users</span>
+          <span>Users In This Room</span>
           <span id="userCount" style="color: var(--accent);">0</span>
         </div>
         <div class="user-list" id="activeUsersList">
-          <div style="font-size: 0.75rem; color: var(--text-muted);">No other users connected</div>
+          <div style="font-size: 0.75rem; color: var(--text-muted);">No other users in this room</div>
         </div>
       </div>
     </div>
 
-    <!-- Footer Controls -->
+    <!-- Sidebar Footer -->
     <div class="sidebar-footer">
-      <button class="btn-secondary" onclick="clearChat()">🗑️ Clear History</button>
-      <button class="btn-secondary" onclick="openJoinModal()">🔄 Switch User</button>
+      <button class="btn-secondary" onclick="clearRoomChat()">🗑️ Clear Room</button>
+      <button class="btn-secondary" onclick="openLobbyModal()">🚪 Leave / Switch Room</button>
     </div>
   </aside>
 
-  <!-- Main Chat Workspace -->
+  <!-- Main Chat Room -->
   <main class="chat-main">
     <header class="chat-header">
-      <div class="chat-header-info">
-        <div class="room-badge"># global-practice-chat</div>
-        <div class="active-protocol-badge proto-ws" id="activeProtoBadge">
-          <span style="font-size: 0.8rem;">●</span> WebSocket Active
-        </div>
+      <div class="room-badge">
+        <span id="headerRoomTitle"># general</span>
+        <span id="headerRoomLock" class="lock-badge" style="display:none;">🔒 Protected</span>
       </div>
-      <div class="header-actions">
-        <span style="font-size: 0.75rem; color: var(--text-muted); font-family: 'JetBrains Mono', monospace;">
-          Port: 8000
-        </span>
+      <div class="active-protocol-badge proto-ws" id="activeProtoBadge">
+        <span>●</span> WebSocket Active
       </div>
     </header>
 
     <!-- Chat Messages Viewport -->
     <div class="chat-messages" id="messagesArea">
       <div class="msg-system">
-        🔒 Practice Lab Ready. Open in Burp Suite's browser to intercept & tamper with messages.
+        🔒 Only clients connected with this Room ID can see or receive these messages.
       </div>
     </div>
 
-    <!-- Bottom Input & Payload Preview -->
+    <!-- Chat Input Area -->
     <div class="chat-bottom">
-      <div class="payload-preview" id="payloadPreviewBar">
-        <span>Target: <b class="method-tag" id="previewMethod">WS /ws/{username}</b></span>
+      <div class="payload-preview">
+        <span>Target: <b class="method-tag" id="previewMethod">WS /ws/{room}/{user}</b></span>
         <span>Payload: <code id="previewJson">{"sender": "...", "content": "..."}</code></span>
       </div>
 
@@ -688,7 +673,7 @@
           type="text" 
           id="chatInput" 
           class="chat-input" 
-          placeholder="Type a message or test payload... (Enter to send)" 
+          placeholder="Type message to this room... (Enter to send)" 
           onkeydown="if(event.key==='Enter') sendMessage()"
           oninput="updatePayloadPreview()"
         >
@@ -704,67 +689,204 @@
   </main>
 </div>
 
-<!-- Join Chat Modal -->
-<div class="modal-overlay" id="joinModal">
-  <div class="join-modal">
-    <h2>🎯 Join Chat Lab</h2>
-    <p>Choose a username to enter the multi-client chat room. Open multiple browser tabs to simulate different users (Alice, Bob, etc.).</p>
-
-    <div style="font-size: 0.75rem; color: var(--text-muted);">Quick Pick:</div>
-    <div class="quick-users">
-      <button class="quick-user-btn" onclick="selectQuickUser('Alice')">Alice</button>
-      <button class="quick-user-btn" onclick="selectQuickUser('Bob')">Bob</button>
-      <button class="quick-user-btn" onclick="selectQuickUser('Hacker')">Hacker</button>
-      <button class="quick-user-btn" onclick="selectQuickUser('Admin')">Admin</button>
+<!-- Room Selection / Lobby Modal -->
+<div class="modal-overlay" id="lobbyModal">
+  <div class="lobby-modal">
+    <div class="modal-tabs">
+      <button class="tab-btn active" id="tabCreate" onclick="switchTab('create')">➕ Create Private Room</button>
+      <button class="tab-btn" id="tabJoin" onclick="switchTab('join')">🔑 Join Existing Room</button>
     </div>
 
-    <input type="text" id="usernameInput" class="join-input" placeholder="Or type a custom username..." value="Alice">
-    <button class="btn-join" onclick="joinChat()">Enter Chat Room</button>
+    <div class="modal-body">
+      <div class="modal-error" id="modalError"></div>
+
+      <!-- Tab 1: Create Room -->
+      <div id="createRoomSection">
+        <div class="form-group">
+          <label>Room ID / Code (Unique identifier):</label>
+          <input type="text" id="createRoomId" class="form-input" placeholder="e.g. secret-room-101" value="my-room">
+        </div>
+        <div class="form-group" style="margin-top: 10px;">
+          <label>Room Name (Display Name):</label>
+          <input type="text" id="createRoomName" class="form-input" placeholder="e.g. Team Security Lab" value="Private Team Room">
+        </div>
+        <div class="form-group" style="margin-top: 10px;">
+          <label>Room Password / PIN (Optional):</label>
+          <input type="password" id="createRoomPassword" class="form-input" placeholder="Leave blank if no password required">
+        </div>
+      </div>
+
+      <!-- Tab 2: Join Room -->
+      <div id="joinRoomSection" style="display: none;">
+        <div class="form-group">
+          <label>Room ID to Join:</label>
+          <input type="text" id="joinRoomId" class="form-input" placeholder="Enter Room ID (e.g. secret-room-101)">
+        </div>
+        <div class="form-group" style="margin-top: 10px;">
+          <label>Room Password (If protected):</label>
+          <input type="password" id="joinRoomPassword" class="form-input" placeholder="Enter password if required">
+        </div>
+      </div>
+
+      <!-- Common Username Section -->
+      <div class="form-group" style="margin-top: 8px;">
+        <label>Your Username:</label>
+        <input type="text" id="usernameInput" class="form-input" placeholder="Enter your name" value="Alice">
+        <div class="quick-users">
+          <button class="quick-user-btn" onclick="setUsername('Alice')">Alice</button>
+          <button class="quick-user-btn" onclick="setUsername('Bob')">Bob</button>
+          <button class="quick-user-btn" onclick="setUsername('Charlie')">Charlie</button>
+          <button class="quick-user-btn" onclick="setUsername('Admin')">Admin</button>
+        </div>
+      </div>
+
+      <button class="btn-submit" id="submitActionBtn" onclick="handleLobbySubmit()">Create &amp; Enter Room</button>
+    </div>
   </div>
 </div>
 
 <script>
   let ws = null;
-  let currentUser = "";
+  let currentRoom = "general";
+  let currentRoomName = "General Chat";
+  let currentRoomPassword = "";
+  let isRoomProtected = false;
+  let currentUser = "Alice";
+  let currentTab = "create";
+
   const avatarColors = ["#3b82f6", "#10b981", "#8b5cf6", "#ec4899", "#f59e0b", "#06b6d4"];
 
   function getAvatarColor(name) {
     let hash = 0;
-    for (let i = 0; i < name.length; i++) {
-      hash = name.charCodeAt(i) + ((hash << 5) - hash);
-    }
+    for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
     return avatarColors[Math.abs(hash) % avatarColors.length];
   }
 
-  function openJoinModal() {
-    if (ws) {
-      ws.close();
+  function switchTab(tab) {
+    currentTab = tab;
+    const tabCreate = document.getElementById("tabCreate");
+    const tabJoin = document.getElementById("tabJoin");
+    const createSec = document.getElementById("createRoomSection");
+    const joinSec = document.getElementById("joinRoomSection");
+    const submitBtn = document.getElementById("submitActionBtn");
+    hideError();
+
+    if (tab === "create") {
+      tabCreate.classList.add("active");
+      tabJoin.classList.remove("active");
+      createSec.style.display = "block";
+      joinSec.style.display = "none";
+      submitBtn.textContent = "Create & Enter Room";
+    } else {
+      tabJoin.classList.add("active");
+      tabCreate.classList.remove("active");
+      createSec.style.display = "none";
+      joinSec.style.display = "block";
+      submitBtn.textContent = "Verify & Join Room";
     }
-    document.getElementById("joinModal").style.display = "flex";
   }
 
-  function selectQuickUser(name) {
+  function setUsername(name) {
     document.getElementById("usernameInput").value = name;
-    joinChat();
   }
 
-  function joinChat() {
-    const input = document.getElementById("usernameInput");
-    const name = input.value.trim();
-    if (!name) return alert("Please enter a username");
+  function showError(msg) {
+    const errBox = document.getElementById("modalError");
+    errBox.textContent = msg;
+    errBox.style.display = "block";
+  }
 
-    currentUser = name;
+  function hideError() {
+    document.getElementById("modalError").style.display = "none";
+  }
+
+  function openLobbyModal() {
+    if (ws) ws.close();
+    document.getElementById("lobbyModal").style.display = "flex";
+  }
+
+  async function handleLobbySubmit() {
+    hideError();
+    const user = document.getElementById("usernameInput").value.trim();
+    if (!user) return showError("Please enter a username");
+    currentUser = user;
+
+    if (currentTab === "create") {
+      const roomId = document.getElementById("createRoomId").value.trim().toLowerCase();
+      const roomName = document.getElementById("createRoomName").value.trim() || roomId;
+      const pwd = document.getElementById("createRoomPassword").value;
+
+      if (!roomId) return showError("Please specify a Room ID");
+
+      try {
+        const resp = await fetch("/api/rooms/create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ room_id: roomId, room_name: roomName, password: pwd })
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+          enterRoom(roomId, roomName, pwd, !!pwd);
+        } else {
+          showError(data.detail || "Failed to create room");
+        }
+      } catch (err) {
+        showError("Network error: " + err.message);
+      }
+    } else {
+      const roomId = document.getElementById("joinRoomId").value.trim().toLowerCase();
+      const pwd = document.getElementById("joinRoomPassword").value;
+
+      if (!roomId) return showError("Please enter the Room ID to join");
+
+      try {
+        const resp = await fetch("/api/rooms/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ room_id: roomId, password: pwd })
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+          enterRoom(data.room_id, data.room_name, pwd, data.is_protected);
+        } else {
+          showError(data.detail || "Invalid room or password");
+        }
+      } catch (err) {
+        showError("Network error: " + err.message);
+      }
+    }
+  }
+
+  function enterRoom(roomId, roomName, password, isProtected) {
+    currentRoom = roomId;
+    currentRoomName = roomName;
+    currentRoomPassword = password;
+    isRoomProtected = isProtected;
+
+    // Update UI elements
+    document.getElementById("roomIdDisplay").textContent = roomId;
+    document.getElementById("roomNameDisplay").textContent = roomName;
+    document.getElementById("headerRoomTitle").textContent = "# " + roomName;
     document.getElementById("myUsernameDisplay").textContent = currentUser;
     document.getElementById("myAvatar").textContent = currentUser.charAt(0).toUpperCase();
     document.getElementById("myAvatar").style.backgroundColor = getAvatarColor(currentUser);
-    document.getElementById("joinModal").style.display = "none";
 
-    connectWebSocket();
+    const lockDisplays = [document.getElementById("roomLockStatus"), document.getElementById("headerRoomLock")];
+    lockDisplays.forEach(el => el.style.display = isProtected ? "inline-block" : "none");
+
+    document.getElementById("messagesArea").innerHTML = "";
+    document.getElementById("lobbyModal").style.display = "none";
+
+    connectRoomWebSocket();
+    loadPastMessages();
   }
 
-  function connectWebSocket() {
+  function connectRoomWebSocket() {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/ws/${encodeURIComponent(currentUser)}`;
+    let wsUrl = `${protocol}//${window.location.host}/ws/${encodeURIComponent(currentRoom)}/${encodeURIComponent(currentUser)}`;
+    if (currentRoomPassword) {
+      wsUrl += `?password=${encodeURIComponent(currentRoomPassword)}`;
+    }
 
     ws = new WebSocket(wsUrl);
 
@@ -780,6 +902,8 @@
         const data = JSON.parse(event.data);
         if (data.type === "users_update") {
           renderUserList(data.users);
+        } else if (data.type === "error") {
+          alert("Room error: " + data.content);
         } else {
           appendMessage(data);
         }
@@ -792,10 +916,6 @@
       document.getElementById("statusDot").classList.remove("online");
       document.getElementById("statusText").textContent = "Offline";
     };
-
-    ws.onerror = (err) => {
-      console.error("WebSocket error:", err);
-    };
   }
 
   function renderUserList(users) {
@@ -805,7 +925,7 @@
     list.innerHTML = "";
 
     if (!users || users.length === 0) {
-      list.innerHTML = `<div style="font-size:0.75rem; color:var(--text-muted);">No users online</div>`;
+      list.innerHTML = `<div style="font-size:0.75rem; color:var(--text-muted);">No users in this room</div>`;
       return;
     }
 
@@ -858,10 +978,10 @@
     const badge = document.getElementById("activeProtoBadge");
     if (mode === "ws") {
       badge.className = "active-protocol-badge proto-ws";
-      badge.innerHTML = `<span style="font-size:0.8rem;">●</span> WebSocket Active`;
+      badge.innerHTML = `<span>●</span> WebSocket Active`;
     } else {
       badge.className = "active-protocol-badge proto-http";
-      badge.innerHTML = `<span style="font-size:0.8rem;">●</span> HTTP POST Active`;
+      badge.innerHTML = `<span>●</span> HTTP POST Active`;
     }
     updatePayloadPreview();
   }
@@ -873,14 +993,15 @@
     const previewJson = document.getElementById("previewJson");
 
     if (mode === "ws") {
-      previewMethod.textContent = `WS /ws/${currentUser || 'user'}`;
+      previewMethod.textContent = `WS /ws/${currentRoom}/${currentUser}`;
       previewMethod.style.color = "#60a5fa";
     } else {
-      previewMethod.textContent = `POST /api/send`;
+      previewMethod.textContent = `POST /api/rooms/${currentRoom}/send`;
       previewMethod.style.color = "#ff6633";
     }
 
-    const payloadObj = { sender: currentUser || "User", content: inputVal };
+    const payloadObj = { sender: currentUser, content: inputVal };
+    if (currentRoomPassword) payloadObj.password = currentRoomPassword;
     previewJson.textContent = JSON.stringify(payloadObj);
   }
 
@@ -904,14 +1025,20 @@
       updatePayloadPreview();
     } else {
       try {
-        const response = await fetch("/api/send", {
+        const response = await fetch(`/api/rooms/${encodeURIComponent(currentRoom)}/send`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sender: currentUser, content: content })
+          body: JSON.stringify({
+            sender: currentUser,
+            content: content,
+            password: currentRoomPassword || null
+          })
         });
         if (response.ok) {
           input.value = "";
           updatePayloadPreview();
+        } else {
+          alert("Send error: " + response.statusText);
         }
       } catch (err) {
         console.error("HTTP send error:", err);
@@ -919,16 +1046,33 @@
     }
   }
 
-  async function clearChat() {
-    if (!confirm("Clear all chat messages on the server?")) return;
+  async function loadPastMessages() {
+    let url = `/api/rooms/${encodeURIComponent(currentRoom)}/messages`;
+    if (currentRoomPassword) url += `?password=${encodeURIComponent(currentRoomPassword)}`;
     try {
-      await fetch("/api/messages", { method: "DELETE" });
-      document.getElementById("messagesArea").innerHTML = `
-        <div class="msg-system">Chat history cleared.</div>
-      `;
+      const r = await fetch(url);
+      if (r.ok) {
+        const data = await r.json();
+        if (data.messages) data.messages.forEach(appendMessage);
+      }
+    } catch (e) {}
+  }
+
+  async function clearRoomChat() {
+    if (!confirm(`Clear all messages in room "${currentRoom}"?`)) return;
+    let url = `/api/rooms/${encodeURIComponent(currentRoom)}/messages`;
+    if (currentRoomPassword) url += `?password=${encodeURIComponent(currentRoomPassword)}`;
+    try {
+      await fetch(url, { method: "DELETE" });
+      document.getElementById("messagesArea").innerHTML = `<div class="msg-system">Room messages cleared.</div>`;
     } catch (e) {
       console.error(e);
     }
+  }
+
+  function copyRoomId() {
+    navigator.clipboard.writeText(currentRoom);
+    alert(`Copied Room ID: "${currentRoom}". Share this ID so your friends can join this room!`);
   }
 
   function escapeHtml(text) {
@@ -937,25 +1081,6 @@
       return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'}[m];
     });
   }
-
-  // Pre-load past messages & users
-  fetch("/api/messages")
-    .then(r => r.json())
-    .then(data => {
-      if (data.messages) {
-        data.messages.forEach(appendMessage);
-      }
-    })
-    .catch(() => {});
-
-  fetch("/api/users")
-    .then(r => r.json())
-    .then(data => {
-      if (data.active_users) {
-        renderUserList(data.active_users);
-      }
-    })
-    .catch(() => {});
 </script>
 </body>
 </html>
