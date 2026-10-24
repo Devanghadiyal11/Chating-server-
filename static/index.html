@@ -1125,7 +1125,9 @@
           input.value = "";
           updatePayloadPreview();
         } else {
-          alert("Send error: " + response.statusText);
+          const errData = await response.json().catch(() => ({}));
+          const errMsg = errData.detail || errData.message || ("HTTP " + response.status);
+          alert("Send error: " + errMsg);
         }
       } catch (err) {
         console.error("HTTP send error:", err);
@@ -1145,6 +1147,13 @@
       }
     } catch (e) {}
   }
+
+  // Periodic polling fallback (ensures messages sync on Vercel / serverless deployments)
+  setInterval(() => {
+    if (currentPin && document.getElementById("lobbyModal").style.display === "none") {
+      loadPastMessages();
+    }
+  }, 1500);
 
   async function clearRoomChat() {
     if (!confirm(`Clear all messages in room "${currentPin}"?`)) return;
