@@ -599,13 +599,134 @@
       border: 1px solid rgba(239, 68, 68, 0.3);
       display: none;
     }
+
+    /* Mobile Responsive UI (Clean & Distraction-Free) */
+    .mobile-menu-btn {
+      display: none;
+      background: rgba(51, 65, 85, 0.5);
+      border: 1px solid var(--border);
+      color: white;
+      font-size: 1.15rem;
+      padding: 6px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      line-height: 1;
+    }
+    .mobile-users-pill {
+      display: none;
+      font-size: 0.72rem;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #34d399;
+      padding: 4px 10px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-weight: 600;
+      align-items: center;
+      gap: 5px;
+    }
+    .sidebar-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(4px);
+      z-index: 40;
+    }
+
+    @media (max-width: 768px) {
+      .mobile-menu-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .mobile-users-pill {
+        display: inline-flex;
+      }
+      /* Clean Screen: Hide technical Burp debugging and payload preview on mobile */
+      .payload-preview {
+        display: none !important;
+      }
+      .active-protocol-badge {
+        display: none !important;
+      }
+      .burp-box {
+        display: none !important;
+      }
+      
+      /* Mobile Off-canvas Slide Drawer */
+      .sidebar {
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        left: -100%;
+        width: 82%;
+        max-width: 320px;
+        transition: left 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+        z-index: 50;
+        box-shadow: 10px 0 30px rgba(0,0,0,0.85);
+      }
+      .sidebar.open {
+        left: 0;
+      }
+      .sidebar-backdrop.active {
+        display: block;
+      }
+
+      /* Clean mobile chat layout */
+      .chat-header {
+        padding: 10px 14px;
+      }
+      .room-badge {
+        font-size: 0.92rem;
+        gap: 6px;
+      }
+      .pin-pill {
+        font-size: 0.7rem;
+        padding: 2px 6px;
+      }
+      .chat-messages {
+        padding: 12px 10px;
+        gap: 8px;
+      }
+      .msg-row {
+        max-width: 90%;
+      }
+      .msg-bubble {
+        padding: 9px 13px;
+        font-size: 0.9rem;
+      }
+      .chat-bottom {
+        padding: 10px 12px 14px 12px;
+      }
+      .chat-input {
+        padding: 10px 14px;
+        font-size: 0.92rem;
+      }
+      .btn-send {
+        padding: 0 16px;
+      }
+
+      /* Clean Mobile Modal */
+      .lobby-modal {
+        max-width: 94%;
+        margin: 12px;
+      }
+      .modal-body {
+        padding: 18px 14px;
+        gap: 12px;
+      }
+    }
   </style>
 </head>
 <body>
 
 <div class="app-layout">
-  <!-- Left Sidebar -->
-  <aside class="sidebar">
+  <!-- Mobile Sidebar Backdrop Overlay -->
+  <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleSidebar(false)"></div>
+
+  <!-- Left Sidebar (Collapsible drawer on mobile) -->
+  <aside class="sidebar" id="appSidebar">
     <div class="brand-header">
       <div class="brand-icon">BP</div>
       <div class="brand-text">
@@ -692,9 +813,16 @@
   <!-- Main Chat Room -->
   <main class="chat-main">
     <header class="chat-header">
-      <div class="room-badge">
-        <span id="headerRoomTitle"># Private Room</span>
-        <span class="pin-pill" id="headerPinPill">PIN: ----</span>
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <button class="mobile-menu-btn" onclick="toggleSidebar(true)" title="Menu">☰</button>
+        <div class="room-badge">
+          <span id="headerRoomTitle"># Private Room</span>
+          <span class="pin-pill" id="headerPinPill" onclick="copyPin()" title="Click to copy PIN">PIN: ----</span>
+        </div>
+      </div>
+      <div class="mobile-users-pill" onclick="toggleSidebar(true)">
+        <span style="font-size: 0.65rem;">●</span>
+        <span id="mobileUserCount">1 online</span>
       </div>
       <div class="active-protocol-badge proto-http" id="activeProtoBadge">
         <span>●</span> HTTP POST Active
@@ -842,6 +970,7 @@
   }
 
   function openLobbyModal() {
+    toggleSidebar(false);
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     currentPin = "";
     if (ws) ws.close();
@@ -994,10 +1123,26 @@
     };
   }
 
+  function toggleSidebar(forceState) {
+    const sidebar = document.getElementById("appSidebar");
+    const backdrop = document.getElementById("sidebarBackdrop");
+    const isOpen = (forceState !== undefined) ? forceState : !sidebar.classList.contains("open");
+    
+    if (isOpen) {
+      sidebar.classList.add("open");
+      backdrop.classList.add("active");
+    } else {
+      sidebar.classList.remove("open");
+      backdrop.classList.remove("active");
+    }
+  }
+
   function renderUserList(users, host) {
     const list = document.getElementById("activeUsersList");
     const count = document.getElementById("userCount");
-    count.textContent = users.length;
+    const mobileCount = document.getElementById("mobileUserCount");
+    if (count) count.textContent = users.length;
+    if (mobileCount) mobileCount.textContent = `${users.length} online`;
     list.innerHTML = "";
 
     if (!users || users.length === 0) {
