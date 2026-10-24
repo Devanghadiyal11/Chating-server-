@@ -10,7 +10,7 @@ from pydantic import BaseModel
 import uvicorn
 import os
 
-app = FastAPI(title="Burp Suite Chat Lab Server - Stable Edition")
+app = FastAPI(title="Chating room Server - Stable Edition")
 
 # --- Room & Connection Management ---
 
@@ -328,7 +328,7 @@ async def get_index():
 
 if __name__ == "__main__":
     print("==================================================================")
-    print("  Burp Suite Chat Lab Server (High-Stability Edition)")
+    print("  Chating room Server (High-Stability Edition)")
     print("  Local access:    http://127.0.0.1:8000")
     print("  Network access:  http://0.0.0.0:8000")
     print("==================================================================")

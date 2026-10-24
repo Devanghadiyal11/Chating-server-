@@ -1,4 +1,4 @@
-# 🛡️ Burp Suite Multi-Client Chat Lab (Full Documentation)
+# 💬 Chating room (Full Documentation)
 
 A modern, full-featured multi-client real-time chat application built with **FastAPI**, **WebSockets**, and a responsive **Web UI**. Designed both for real-world usage across desktop/mobile browsers and as an interactive security lab for mastering **Burp Suite** (HTTP interception, tampering, Repeater, Intruder PIN brute-forcing, and WebSocket inspection).
 
