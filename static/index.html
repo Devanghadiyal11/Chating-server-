@@ -737,7 +737,10 @@
 
     <!-- Active Room PIN Card -->
     <div class="room-info-card">
-      <div style="font-size: 0.72rem; color: var(--text-muted); font-weight: 600;" id="roomNameDisplay">Private Room</div>
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-size: 0.72rem; color: var(--text-muted); font-weight: 600;" id="roomNameDisplay">Private Room</span>
+        <span style="font-size: 0.72rem; color: #fbbf24; font-weight: 700;" id="hostTagDisplay">👑 Host: Alice</span>
+      </div>
       
       <div class="pin-display-box">
         <span class="pin-label">Share this 4-Digit PIN:</span>
@@ -1041,6 +1044,9 @@
 
     const isHost = (currentUser === currentHost);
     document.getElementById("hostCloseBtn").style.display = isHost ? "block" : "none";
+    if (document.getElementById("hostTagDisplay")) {
+      document.getElementById("hostTagDisplay").textContent = "👑 Host: " + (currentHost || "Host");
+    }
 
     connectWebSocket();
     loadPastMessages();
@@ -1145,22 +1151,31 @@
     if (mobileCount) mobileCount.textContent = `${users.length} online`;
     list.innerHTML = "";
 
+    if (host && document.getElementById("hostTagDisplay")) {
+      document.getElementById("hostTagDisplay").textContent = "👑 Host: " + host;
+    }
+
     if (!users || users.length === 0) {
       list.innerHTML = `<div style="font-size:0.75rem; color:var(--text-muted);">Waiting for users to join...</div>`;
       return;
     }
 
+    const hostLower = (host || "").trim().toLowerCase();
+    const myLower = (currentUser || "").trim().toLowerCase();
+
     users.forEach(user => {
       const div = document.createElement("div");
       div.className = "user-item";
-      const isMe = user === currentUser;
-      const isHost = user === host;
+      const uLower = user.trim().toLowerCase();
+      const isHost = (hostLower && uLower === hostLower);
+      const isMe = (uLower === myLower);
+
       div.innerHTML = `
         <span class="dot"></span>
-        <span>
-          ${escapeHtml(user)} 
-          ${isHost ? '<b style="color:#fbbf24; font-size:0.75rem;">(👑 Host)</b>' : ''}
-          ${isMe ? '<b style="color:var(--accent); font-size:0.75rem;">(You)</b>' : ''}
+        <span style="display:flex; align-items:center; gap:6px; flex:1;">
+          <span style="font-weight:${isHost ? '700' : '500'}; color:${isHost ? '#fff' : 'inherit'};">${escapeHtml(user)}</span>
+          ${isHost ? '<span style="font-size:1.1rem; line-height:1; filter: drop-shadow(0 0 6px rgba(251, 191, 36, 0.7));" title="Room Host">👑</span><span style="font-size:0.68rem; padding:1px 6px; border-radius:4px; background:rgba(251,191,36,0.18); color:#fbbf24; font-weight:700;">Host</span>' : ''}
+          ${isMe ? '<span style="font-size:0.68rem; padding:1px 6px; border-radius:4px; background:rgba(56,189,248,0.18); color:var(--accent); font-weight:600; margin-left:auto;">You</span>' : ''}
         </span>
       `;
       list.appendChild(div);
@@ -1193,11 +1208,16 @@
       const avatarColor = getAvatarColor(msg.sender || "User");
       const initial = (msg.sender || "U").charAt(0).toUpperCase();
 
+      const isMsgHost = (currentHost && (msg.sender || "").trim().toLowerCase() === currentHost.trim().toLowerCase());
+
       row.innerHTML = `
         <div class="msg-avatar" style="background:${avatarColor}">${initial}</div>
         <div class="msg-content-wrapper">
           <div class="msg-header">
-            <span class="msg-sender">${escapeHtml(msg.sender || "Unknown")}</span>
+            <span class="msg-sender">
+              ${escapeHtml(msg.sender || "Unknown")}
+              ${isMsgHost ? '<span style="font-size:0.95rem; line-height:1; vertical-align:middle;" title="Room Host">👑</span>' : ''}
+            </span>
             <span class="msg-time">${msg.timestamp || ""}</span>
           </div>
           <div class="msg-bubble">${escapeHtml(msg.content || "")}</div>
