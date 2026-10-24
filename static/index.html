@@ -531,40 +531,147 @@
       padding: 4px 8px;
       margin-left: auto;
     }
+    /* Secure View-Only Photos */
+    .photo-secure-wrapper {
+      position: relative;
+      display: inline-block;
+      border-radius: 8px;
+      overflow: hidden;
+      max-width: 280px;
+      max-height: 240px;
+      margin-bottom: 6px;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
     .chat-photo {
       max-width: 280px;
       max-height: 240px;
       width: 100%;
       border-radius: 8px;
-      cursor: pointer;
       display: block;
-      margin-bottom: 6px;
       object-fit: cover;
-      transition: transform 0.15s, opacity 0.15s;
+      pointer-events: none; /* Prevents long-press & touch menus */
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-user-drag: none;
     }
-    .chat-photo:hover {
-      opacity: 0.95;
-      transform: scale(1.01);
+    .photo-watermark {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.72rem;
+      font-weight: 800;
+      color: rgba(255, 255, 255, 0.45);
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      transform: rotate(-25deg);
+      pointer-events: none;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+      white-space: nowrap;
+      user-select: none;
+      -webkit-user-select: none;
     }
-    /* Fullscreen Lightbox */
+    .photo-shield {
+      position: absolute;
+      inset: 0;
+      background: transparent;
+      z-index: 5;
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+
+    /* Secure Fullscreen Lightbox */
     .lightbox-modal {
       display: none;
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,0.92);
-      backdrop-filter: blur(8px);
+      background: rgba(0,0,0,0.95);
+      backdrop-filter: blur(10px);
       z-index: 200;
       align-items: center;
       justify-content: center;
       flex-direction: column;
-      padding: 20px;
+      padding: 16px;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
     }
-    .lightbox-img {
-      max-width: 90vw;
-      max-height: 85vh;
+    .lightbox-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      max-width: 95vw;
+      max-height: 90vh;
+      position: relative;
+    }
+    .lightbox-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 14px;
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    .lightbox-secure-wrapper {
+      position: relative;
       border-radius: 8px;
-      box-shadow: 0 10px 40px rgba(0,0,0,0.8);
-      object-fit: contain;
+      overflow: hidden;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .lightbox-canvas {
+      max-width: 90vw;
+      max-height: 80vh;
+      display: block;
+      border-radius: 8px;
+      pointer-events: none;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+    .lightbox-watermark {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.1rem;
+      font-weight: 800;
+      color: rgba(255, 255, 255, 0.35);
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      transform: rotate(-25deg);
+      pointer-events: none;
+      text-shadow: 0 1px 6px rgba(0,0,0,0.9);
+      text-align: center;
+      line-height: 1.6;
+      white-space: pre-line;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .lightbox-shield {
+      position: absolute;
+      inset: 0;
+      background: transparent;
+      z-index: 10;
+      cursor: default;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
     }
     .lightbox-close {
       position: absolute;
@@ -581,6 +688,41 @@
       display: flex;
       align-items: center;
       justify-content: center;
+      z-index: 210;
+    }
+
+    /* Privacy Curtain (Blur when multitasking / tab blur / capture attempted) */
+    .privacy-curtain {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.98);
+      backdrop-filter: blur(25px);
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      text-align: center;
+      padding: 24px;
+      user-select: none;
+    }
+    .privacy-curtain-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      padding: 24px 32px;
+      border-radius: 16px;
+      box-shadow: 0 12px 36px rgba(0,0,0,0.7);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    /* Print & PDF Capture Protection */
+    @media print {
+      body, .app-layout, .lightbox-modal {
+        display: none !important;
+      }
     }
 
     .payload-preview {
@@ -922,7 +1064,7 @@
       .btn-send span {
         display: none !important; /* Hide 'Send' text on mobile, showing the clean airplane icon */
       }
-      .chat-photo {
+      .photo-secure-wrapper, .chat-photo {
         max-width: 220px !important;
         max-height: 180px !important;
       }
@@ -1120,10 +1262,29 @@
   </main>
 </div>
 
-<!-- Lightbox Fullscreen Image Modal -->
-<div class="lightbox-modal" id="lightboxModal" onclick="closeLightbox()">
+<!-- Secure Fullscreen Lightbox Image Modal -->
+<div class="lightbox-modal" id="lightboxModal" onclick="closeLightbox()" oncontextmenu="return false;">
   <button class="lightbox-close" onclick="closeLightbox()">✕</button>
-  <img id="lightboxImg" class="lightbox-img" src="" alt="Full view" onclick="event.stopPropagation()">
+  <div class="lightbox-container" onclick="event.stopPropagation()">
+    <div class="lightbox-badge">🔒 View-Only • Screen Capture &amp; Downloads Disabled</div>
+    <div class="lightbox-secure-wrapper">
+      <canvas id="lightboxCanvas" class="lightbox-canvas"></canvas>
+      <div class="lightbox-watermark" id="lightboxWatermark">CONFIDENTIAL • VIEW ONLY</div>
+      <div class="lightbox-shield" oncontextmenu="return false;" ondragstart="return false;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Privacy Curtain Overlay (Obscures content during screenshot attempt or window blur) -->
+<div id="privacyCurtain" class="privacy-curtain" style="display: none;" onclick="resumeFromPrivacyCurtain()">
+  <div class="privacy-curtain-box">
+    <span style="font-size: 2.2rem;">🔒</span>
+    <h3 style="margin: 0; font-size: 1.15rem; color: #f8fafc;">View-Only Protected Mode</h3>
+    <p style="margin: 0; font-size: 0.85rem; color: #94a3b8; max-width: 280px;">
+      Content is obscured during multitasking or screen capture. Tap anywhere to resume viewing.
+    </p>
+    <button class="btn-primary" style="margin-top: 8px; padding: 6px 18px; font-size: 0.85rem;" onclick="resumeFromPrivacyCurtain()">Resume Viewing</button>
+  </div>
 </div>
 
 <!-- Room PIN Lobby Modal -->
@@ -1472,7 +1633,14 @@
 
       let contentHtml = "";
       if (msg.image) {
-        contentHtml += `<img class="chat-photo" src="${msg.image}" onclick="openLightbox('${msg.image}')" alt="Photo" title="Click to view full size">`;
+        const watermarkText = `VIEW ONLY • ${escapeHtml(currentUser || 'USER')}`;
+        contentHtml += `
+          <div class="photo-secure-wrapper" onclick="openLightbox('${msg.image}')" oncontextmenu="return false;">
+            <img class="chat-photo" src="${msg.image}" draggable="false" alt="View-Only Photo">
+            <div class="photo-watermark">${watermarkText}</div>
+            <div class="photo-shield" oncontextmenu="return false;" ondragstart="return false;"></div>
+          </div>
+        `;
       }
       if (msg.content) {
         const isLongText = (msg.content.length > 80 || msg.content.includes('\n'));
@@ -1637,17 +1805,86 @@
 
   function openLightbox(src) {
     const modal = document.getElementById("lightboxModal");
-    const img = document.getElementById("lightboxImg");
-    if (modal && img) {
-      img.src = src;
-      modal.style.display = "flex";
+    const canvas = document.getElementById("lightboxCanvas");
+    const watermarkEl = document.getElementById("lightboxWatermark");
+    if (!modal || !canvas) return;
+
+    if (watermarkEl) {
+      watermarkEl.textContent = `🔒 CONFIDENTIAL • VIEW ONLY\n${currentUser || 'USER'} • ROOM ${currentPin || '----'}`;
     }
+
+    const img = new Image();
+    img.onload = function() {
+      const maxW = window.innerWidth * 0.9;
+      const maxH = window.innerHeight * 0.75;
+      let w = img.width;
+      let h = img.height;
+
+      const scale = Math.min(maxW / w, maxH / h, 1);
+      canvas.width = Math.round(w * scale);
+      canvas.height = Math.round(h * scale);
+
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      modal.style.display = "flex";
+    };
+    img.src = src;
   }
 
   function closeLightbox() {
     const modal = document.getElementById("lightboxModal");
     if (modal) modal.style.display = "none";
   }
+
+  // --- View-Only & Anti-Screenshot Protections ---
+  function showPrivacyCurtain() {
+    const curtain = document.getElementById("privacyCurtain");
+    if (curtain) curtain.style.display = "flex";
+  }
+
+  function resumeFromPrivacyCurtain() {
+    const curtain = document.getElementById("privacyCurtain");
+    if (curtain) curtain.style.display = "none";
+  }
+
+  // When multitasking, switching apps, or capturing (triggering blur or hidden tab)
+  window.addEventListener("blur", () => {
+    const modal = document.getElementById("lightboxModal");
+    const isModalOpen = modal && modal.style.display === "flex";
+    const hasPhotos = document.querySelector(".chat-photo");
+    if (isModalOpen || hasPhotos) {
+      showPrivacyCurtain();
+    }
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      showPrivacyCurtain();
+    }
+  });
+
+  // Intercept screenshot and save keys (PrintScreen, Ctrl+S, Ctrl+P)
+  window.addEventListener("keyup", (e) => {
+    if (e.key === "PrintScreen") {
+      try { navigator.clipboard.writeText(""); } catch (err) {}
+      showPrivacyCurtain();
+    }
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "p" || e.key === "S" || e.key === "P")) {
+      e.preventDefault();
+      alert("Photos in this room are view-only. Saving, printing, and downloads are restricted.");
+    }
+  });
+
+  // Globally disable context menu on protected photos and canvases
+  document.addEventListener("contextmenu", (e) => {
+    if (e.target.closest(".photo-secure-wrapper") || e.target.closest(".lightbox-modal") || e.target.tagName === "IMG" || e.target.tagName === "CANVAS") {
+      e.preventDefault();
+      return false;
+    }
+  }, false);
 
   async function sendMessage() {
     const input = document.getElementById("chatInput");

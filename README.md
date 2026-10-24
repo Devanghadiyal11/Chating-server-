@@ -47,12 +47,15 @@ A modern, full-featured multi-client real-time chat application built with **Fas
 - **HTTP POST Mode (Default):** All messages are sent via standard `POST /api/rooms/{pin}/send` requests. Perfect for instant capture in **Burp Suite Proxy $\rightarrow$ HTTP history** and **Repeater**.
 - **WebSocket Mode:** Switch to real-time full-duplex WebSocket frames (`/ws/{pin}/{user}`) to inspect raw bidirectional frames in **Burp Suite Proxy $\rightarrow$ WebSockets history**.
 
-### 6. 📸 Photo Uploading & Lightbox Viewer
+### 6. 📸 View-Only Photo Sharing & Anti-Leak Protections
 - **Instant Photo Sharing:** Click the 📷 camera button to select photos from your device, computer, or camera roll.
 - **Client-Side Compression:** Automatically resizes and optimizes photos via HTML5 Canvas before sending, producing lightweight (~40–80 KB) images with zero transfer lag.
 - **Serverless & Cloud Friendly:** Base64 data-URL transmission guarantees photo sharing works on **Vercel, Render, Railway, local PC, and mobile** without needing local disk writes or S3 buckets.
-- **Fullscreen Lightbox:** Tap or click any image in the chat to expand it into full resolution.
-- **Burp Suite Testing:** Great for testing image file upload security, MIME-type spoofing, and file size limits!
+- **Mobile Long-Press & Download Shield:** Photos cannot be downloaded or saved via long-press menus or right-clicks (`-webkit-touch-callout: none`, `user-select: none`, transparent security shield overlays, `draggable="false"`).
+- **Secure Canvas Lightbox (No Raw Image Tags):** Fullscreen viewing renders pixels directly to HTML5 Canvas underneath an invisible touch shield, preventing "Save Image As" or inspect-element link extractions.
+- **Dynamic Security Watermarks:** Photos and lightbox views are stamped with diagonal semi-transparent watermarks (`CONFIDENTIAL • VIEW ONLY • [USERNAME] • ROOM [PIN]`) to deter unauthorized external camera captures.
+- **Anti-Screenshot Privacy Curtain:** If a mobile user switches apps, opens multitasking, or triggers window blur/visibility changes to capture content, the screen instantly blacks out with a privacy curtain.
+- **Print & PDF Blocked:** `@media print` rules ensure page printing or saving to PDF completely hides all content.
 
 ### 7. ✍️ Auto Text Alignment & Multi-Line Smart Input
 - **Smart Alignment for Long Text:** Messages with substantial text (multiple paragraphs, code blocks, or > 80 characters) automatically switch to clean justified block alignment (`text-align: justify; text-justify: inter-word; text-align-last: start`) to eliminate jagged edges while preserving natural reading flow.
