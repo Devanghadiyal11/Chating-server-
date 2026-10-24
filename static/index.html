@@ -557,24 +557,6 @@
       -webkit-touch-callout: none;
       -webkit-user-drag: none;
     }
-    .photo-watermark {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.72rem;
-      font-weight: 800;
-      color: rgba(255, 255, 255, 0.45);
-      text-transform: uppercase;
-      letter-spacing: 1.5px;
-      transform: rotate(-25deg);
-      pointer-events: none;
-      text-shadow: 0 1px 4px rgba(0,0,0,0.8);
-      white-space: nowrap;
-      user-select: none;
-      -webkit-user-select: none;
-    }
     .photo-shield {
       position: absolute;
       inset: 0;
@@ -642,26 +624,6 @@
       user-select: none;
       -webkit-user-select: none;
       -webkit-touch-callout: none;
-    }
-    .lightbox-watermark {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1.1rem;
-      font-weight: 800;
-      color: rgba(255, 255, 255, 0.35);
-      text-transform: uppercase;
-      letter-spacing: 2px;
-      transform: rotate(-25deg);
-      pointer-events: none;
-      text-shadow: 0 1px 6px rgba(0,0,0,0.9);
-      text-align: center;
-      line-height: 1.6;
-      white-space: pre-line;
-      user-select: none;
-      -webkit-user-select: none;
     }
     .lightbox-shield {
       position: absolute;
@@ -1266,10 +1228,9 @@
 <div class="lightbox-modal" id="lightboxModal" onclick="closeLightbox()" oncontextmenu="return false;">
   <button class="lightbox-close" onclick="closeLightbox()">✕</button>
   <div class="lightbox-container" onclick="event.stopPropagation()">
-    <div class="lightbox-badge">🔒 View-Only • Screen Capture &amp; Downloads Disabled</div>
+    <div class="lightbox-badge">🔒 View-Only • Downloads Disabled</div>
     <div class="lightbox-secure-wrapper">
       <canvas id="lightboxCanvas" class="lightbox-canvas"></canvas>
-      <div class="lightbox-watermark" id="lightboxWatermark">CONFIDENTIAL • VIEW ONLY</div>
       <div class="lightbox-shield" oncontextmenu="return false;" ondragstart="return false;"></div>
     </div>
   </div>
@@ -1635,11 +1596,9 @@
 
       let contentHtml = "";
       if (msg.image) {
-        const watermarkText = `VIEW ONLY • ${escapeHtml(currentUser || 'USER')}`;
         contentHtml += `
           <div class="photo-secure-wrapper" onclick="openLightbox('${msg.image}')" oncontextmenu="return false;">
-            <img class="chat-photo" src="${msg.image}" draggable="false" alt="View-Only Photo">
-            <div class="photo-watermark">${watermarkText}</div>
+            <img class="chat-photo" src="${msg.image}" draggable="false" alt="Photo">
             <div class="photo-shield" oncontextmenu="return false;" ondragstart="return false;"></div>
           </div>
         `;
@@ -1808,12 +1767,7 @@
   function openLightbox(src) {
     const modal = document.getElementById("lightboxModal");
     const canvas = document.getElementById("lightboxCanvas");
-    const watermarkEl = document.getElementById("lightboxWatermark");
     if (!modal || !canvas) return;
-
-    if (watermarkEl) {
-      watermarkEl.textContent = `🔒 CONFIDENTIAL • VIEW ONLY\n${currentUser || 'USER'} • ROOM ${currentPin || '----'}`;
-    }
 
     const img = new Image();
     img.onload = function() {

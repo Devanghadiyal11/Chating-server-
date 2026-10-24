@@ -43,7 +43,8 @@ def run_tests():
     
     assert_test("Brand Title is 'Chating room'", "Chating room" in html_content)
     assert_test("Photo View-Only Security Shield is present", "photo-secure-wrapper" in html_content and "photo-shield" in html_content)
-    assert_test("Secure Canvas Lightbox is present", "lightboxCanvas" in html_content and "lightbox-watermark" in html_content)
+    assert_test("Secure Canvas Lightbox is present", "lightboxCanvas" in html_content and "lightbox-shield" in html_content)
+    assert_test("Watermark overlay is removed from photos", "photo-watermark" not in html_content and "lightbox-watermark" not in html_content)
     assert_test("Anti-Screenshot Privacy Curtain is present", "privacyCurtain" in html_content)
     assert_test("Auto-Alignment for long text CSS is present", "auto-align-long" in html_content and "text-align: justify" in html_content)
     assert_test("Auto-expanding textarea is used for input", '<textarea' in html_content and 'id="chatInput"' in html_content)
