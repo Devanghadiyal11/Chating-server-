@@ -135,6 +135,8 @@ async def create_room(req: CreateRoomRequest):
 @app.post("/api/rooms/join")
 async def join_room(req: JoinRoomRequest):
     pin = req.pin.strip()
+    if not (pin.isdigit() and len(pin) == 4):
+        raise HTTPException(status_code=400, detail="Invalid PIN format. Room PIN must be a 4-digit numeric code.")
     room = manager.get_or_create(pin)
     room.touch_user(req.username)
 

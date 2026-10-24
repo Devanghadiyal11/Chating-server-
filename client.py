@@ -1,5 +1,5 @@
 """
-Burp Suite Chat Practice Client (4-Digit PIN Rooms)
+Chating room Practice Client (4-Digit PIN Rooms)
 Allows sending & receiving messages via HTTP with built-in proxy support for Burp Suite.
 
 Usage:
@@ -78,7 +78,7 @@ def run_http_client(username: str, pin: str, server_url: str = "http://127.0.0.1
             print(f"[!] Error sending message: {e}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Burp Suite Chat Practice Client")
+    parser = argparse.ArgumentParser(description="Chating room Practice Client")
     parser.add_argument("--user", type=str, default="Alice", help="Your chat username")
     parser.add_argument("--pin", type=str, required=True, help="4-digit Room PIN to join")
     parser.add_argument("--server", type=str, default="http://127.0.0.1:8000", help="Chat server base URL")
