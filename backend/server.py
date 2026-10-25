@@ -933,6 +933,10 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                 await publish_event("theme.updated", username, {"theme": new_theme})
                 continue
 
+            elif msg_type == "chat_clear":
+                await clear_messages()
+                continue
+
             # Standard chat / photo / audio message - reject any other types or empty messages
             if msg_type not in ("chat", "image", "audio"):
                 continue
