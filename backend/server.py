@@ -303,6 +303,10 @@ def get_next_seq() -> int:
 async def save_message(msg: dict):
     """Zero storage: kept strictly in memory for live relay between connected users."""
     global memory_messages
+    content = str(msg.get("content", "")).strip()
+    if not content and not msg.get("image") and not msg.get("audio"):
+        return  # Reject dummy/empty messages
+
     now_ms = int(time.time() * 1000)
     if not msg.get("time_ms"):
         msg["time_ms"] = now_ms
@@ -328,6 +332,7 @@ async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int]
     valid_mem = [
         m for m in memory_messages
         if not (m.get("expires_at") and m["expires_at"] < now_ms)
+        and (bool(str(m.get("content", "")).strip()) or bool(m.get("image")) or bool(m.get("audio")))
     ]
     if after_seq is not None:
         valid_mem = [m for m in valid_mem if m.get("seq", 0) > after_seq]
@@ -360,6 +365,11 @@ async def publish_event(
     event_id: Optional[str] = None
 ) -> dict:
     """Unified Event Pipeline: Broadcast immediately to WebSocket, persist to DB in background."""
+    if event_type == "message.created":
+        content = str(payload.get("content", "")).strip() if isinstance(payload, dict) else ""
+        if not content and not payload.get("image") and not payload.get("audio"):
+            return {}  # Never publish dummy/empty message events
+
     seq = payload.get("seq") if isinstance(payload, dict) and payload.get("seq") else get_next_seq()
     now_ms = get_monotonic_time_ms()
     ev_id = event_id or f"ev_{now_ms}_{secrets.token_hex(4)}"
@@ -885,7 +895,18 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                 await publish_event("theme.updated", username, {"theme": new_theme})
                 continue
 
-            # Standard chat / photo / audio message
+            # Standard chat / photo / audio message - reject any other types or empty messages
+            if msg_type not in ("chat", "image", "audio"):
+                continue
+
+            content = str(data.get("content", "")).strip()
+            image = data.get("image")
+            audio = data.get("audio")
+
+            # Strictly reject dummy / empty messages
+            if not content and not image and not audio:
+                continue
+
             message_id = data.get("msg_id") or data.get("clientMessageId") or f"m_{int(time.time()*1000)}_{random.randint(100, 999)}"
             client_msg_id = data.get("clientMessageId") or message_id
 
@@ -896,9 +917,9 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
             now_ms = get_monotonic_time_ms()
 
             resolved_type = "chat"
-            if data.get("image"):
+            if image:
                 resolved_type = "image"
-            elif data.get("audio"):
+            elif audio:
                 resolved_type = "audio"
 
             ttl = settings_cache.get("disappearing_mode", 0)
@@ -913,9 +934,9 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                 "clientMessageId": client_msg_id,
                 "type": resolved_type,
                 "sender": data.get("sender", username),
-                "content": data.get("content", ""),
-                "image": data.get("image"),
-                "audio": data.get("audio"),
+                "content": content,
+                "image": image,
+                "audio": audio,
                 "audio_duration": data.get("audio_duration"),
                 "reply_to": data.get("reply_to"),
                 "timestamp": datetime.now().strftime("%H:%M"),
