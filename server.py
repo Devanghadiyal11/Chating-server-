@@ -237,6 +237,7 @@ class ChatPayload(BaseModel):
     audio: Optional[str] = None
     audio_duration: Optional[float] = None
     msg_id: Optional[str] = None
+    time_ms: Optional[int] = None
 
 class ReactionPayload(BaseModel):
     msg_id: str
@@ -322,7 +323,7 @@ async def get_messages(since_id: Optional[str] = None, username: Optional[str] =
 @app.post("/api/send")
 async def send_message(msg: ChatPayload, request: Request):
     message_id = msg.msg_id or new_msg_id()
-    now_ms = int(time.time() * 1000)
+    now_ms = int(msg.time_ms or (time.time() * 1000))
 
     # Determine message type
     msg_type = "chat"
@@ -555,7 +556,7 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
 
             # Regular chat / photo / audio message
             message_id = data.get("msg_id") or new_msg_id()
-            now_ms = int(time.time() * 1000)
+            now_ms = int(data.get("time_ms") or (time.time() * 1000))
 
             resolved_type = "chat"
             if data.get("image"):

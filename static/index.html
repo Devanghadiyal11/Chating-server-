@@ -358,6 +358,16 @@
       text-align: center; max-width: 90%;
     }
 
+    .date-divider {
+      align-self: center;
+      font-size: 0.72rem; font-weight: 700;
+      color: var(--accent);
+      background: var(--bg-card); border: 1px solid var(--border);
+      padding: 4px 16px; border-radius: 20px;
+      margin: 10px 0 4px; letter-spacing: 0.4px;
+      user-select: none;
+    }
+
     .msg-row {
       display: flex; align-items: flex-end; gap: 8px;
       max-width: 82%;
@@ -2095,7 +2105,65 @@
     }
   }
 
-  // ── Render Messages ───────────────────────────
+  // ── Date Dividers & Chronological Helpers ────
+  function getDateKey(ms) {
+    const d = new Date(Number(ms));
+    return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+  }
+
+  function formatDateLabel(ms) {
+    const d = new Date(Number(ms));
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+
+    if (d.toDateString() === today.toDateString()) {
+      return "Today";
+    } else if (d.toDateString() === yesterday.toDateString()) {
+      return "Yesterday";
+    } else {
+      return d.toLocaleDateString([], { month: "short", day: "numeric", year: (d.getFullYear() !== today.getFullYear() ? "numeric" : undefined) });
+    }
+  }
+
+  function ensureDateDivider(area, timeMs) {
+    const d = new Date(Number(timeMs));
+    const dateKey = getDateKey(timeMs);
+    if (area.querySelector(`.date-divider[data-date="${dateKey}"]`)) {
+      return;
+    }
+
+    const startOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const divider = document.createElement("div");
+    divider.className = "date-divider";
+    divider.dataset.date = dateKey;
+    divider.dataset.time = String(startOfDay);
+    divider.textContent = formatDateLabel(timeMs);
+
+    insertElementChronologically(area, divider, startOfDay - 1);
+  }
+
+  function insertElementChronologically(area, el, timeMs) {
+    const items = Array.from(area.querySelectorAll("[data-time]"));
+    let inserted = false;
+    for (let i = items.length - 1; i >= 0; i--) {
+      const itemTime = Number(items[i].dataset.time || 0);
+      if (timeMs >= itemTime) {
+        items[i].after(el);
+        inserted = true;
+        break;
+      }
+    }
+    if (!inserted) {
+      if (items.length && timeMs < Number(items[0].dataset.time || 0)) {
+        items[0].before(el);
+      } else {
+        area.appendChild(el);
+      }
+    }
+  }
+
+  // ── Render Messages According to Time ─────────
   function appendMsg(msg) {
     if (!msg) return;
     const msgId = msg.id || msg.msg_id;
@@ -2107,19 +2175,23 @@
 
     const area = document.getElementById("messagesArea");
     const timeMs = Number(msg.time_ms) || Date.now();
+
+    // Ensure day divider ("Today", "Yesterday", etc.) is present
+    ensureDateDivider(area, timeMs);
+
     let el;
 
     if (msg.type === "system") {
       el = document.createElement("div");
       el.className = "msg-system";
-      el.dataset.time = timeMs;
+      el.dataset.time = String(timeMs);
       el.innerHTML = `⚡ ${escHtml(msg.content)}`;
     } else {
       const isMine = (msg.sender || "").toLowerCase() === currentUser.toLowerCase();
       el = document.createElement("div");
       el.className = `msg-row ${isMine ? "mine" : ""}`;
       el.id = `msg_${msg.id}`;
-      el.dataset.time = timeMs;
+      el.dataset.time = String(timeMs);
       el.dataset.id = msg.id;
 
       let contentHtml = "";
@@ -2173,7 +2245,7 @@
         <div class="msg-body">
           <div class="msg-meta">
             <span class="msg-sender">${escHtml(msg.sender || "Unknown")}</span>
-            <span class="msg-time">${msg.timestamp || formatTime(timeMs)}</span>
+            <span class="msg-time">${formatTime(timeMs)}</span>
           </div>
           <div class="msg-bubble-wrap">
             <div class="msg-actions" id="actions_${msg.id}">
@@ -2193,24 +2265,7 @@
       `;
     }
 
-    // Chronological insertion
-    const existing = Array.from(area.querySelectorAll("[data-time]"));
-    let inserted = false;
-    for (let i = existing.length - 1; i >= 0; i--) {
-      if (timeMs >= Number(existing[i].dataset.time || 0)) {
-        existing[i].after(el);
-        inserted = true;
-        break;
-      }
-    }
-    if (!inserted) {
-      if (existing.length && timeMs < Number(existing[0].dataset.time || 0)) {
-        existing[0].before(el);
-      } else {
-        area.appendChild(el);
-      }
-    }
-
+    insertElementChronologically(area, el, timeMs);
     area.scrollTop = area.scrollHeight;
   }
 
@@ -2409,7 +2464,10 @@
       const res = await fetch(url);
       if (res.ok) {
         const d = await res.json();
-        (d.messages || []).forEach(m => {
+        const msgs = (d.messages || []).slice();
+        // Strict chronological sort by time_ms
+        msgs.sort((a, b) => (Number(a.time_ms) || 0) - (Number(b.time_ms) || 0));
+        msgs.forEach(m => {
           appendMsg(m);
           if (m.id) lastSeenId = m.id;
         });
@@ -2674,8 +2732,9 @@
     return s.replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;' }[m]));
   }
   function formatTime(ms) {
-    const d = ms ? new Date(ms) : new Date();
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    if (!ms) return "";
+    const d = new Date(Number(ms));
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true });
   }
 
   // ── Sidebar Controls ──────────────────────────
