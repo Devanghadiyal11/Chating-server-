@@ -29,7 +29,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 
 import motor.motor_asyncio
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Depends, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -261,9 +261,32 @@ def get_current_user_from_req(request: Request) -> str:
 
     raise HTTPException(status_code=401, detail="Authentication token required or expired.")
 
+current_seq = 0
+
+async def get_next_seq() -> int:
+    global current_seq
+    if db is not None:
+        try:
+            res = await db["counters"].find_one_and_update(
+                {"_id": "message_seq"},
+                {"$inc": {"seq": 1}},
+                upsert=True,
+                return_document=motor.motor_asyncio.ReturnDocument.AFTER
+            )
+            if res and "seq" in res:
+                current_seq = max(current_seq, res["seq"])
+                return res["seq"]
+        except Exception as e:
+            print(f"[Counter DB Error] {e}")
+    current_seq += 1
+    return current_seq
+
 async def save_message(msg: dict):
-    """Save to MongoDB FIRST before confirmation."""
+    """Save to MongoDB FIRST before confirmation, allocating atomic sequence number."""
     global memory_messages
+    if msg.get("seq") is None:
+        msg["seq"] = await get_next_seq()
+
     memory_messages.append(msg)
     if len(memory_messages) > 1200:
         memory_messages.pop(0)
@@ -275,8 +298,8 @@ async def save_message(msg: dict):
         except Exception as e:
             print(f"[DB Error] Error saving message {msg.get('id')}: {e}")
 
-async def load_messages(since_id: Optional[str] = None) -> List[dict]:
-    """Load messages sorted strictly by (time_ms, id) ascending."""
+async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int] = None) -> List[dict]:
+    """Load messages sorted strictly by seq and (time_ms, id) ascending."""
     now_ms = int(time.time() * 1000)
     query: Dict[str, Any] = {
         "$or": [
@@ -285,13 +308,22 @@ async def load_messages(since_id: Optional[str] = None) -> List[dict]:
         ]
     }
 
+    if after_seq is not None:
+        query["seq"] = {"$gt": after_seq}
+    elif since_id:
+        if messages_col is not None:
+            try:
+                anchor = await messages_col.find_one({"id": since_id}, {"time_ms": 1, "seq": 1})
+                if anchor:
+                    if "seq" in anchor:
+                        query["seq"] = {"$gt": anchor["seq"]}
+                    else:
+                        query["time_ms"] = {"$gt": anchor["time_ms"]}
+            except Exception:
+                pass
+
     if messages_col is not None:
         try:
-            if since_id:
-                anchor = await messages_col.find_one({"id": since_id}, {"time_ms": 1})
-                if anchor:
-                    query["time_ms"] = {"$gt": anchor["time_ms"]}
-
             cursor = messages_col.find(query, {"_id": 0}).sort("time_ms", 1)
             msgs = await cursor.to_list(length=3000)
             return msgs
@@ -303,11 +335,13 @@ async def load_messages(since_id: Optional[str] = None) -> List[dict]:
         m for m in memory_messages
         if not (m.get("expires_at") and m["expires_at"] < now_ms)
     ]
-    valid_mem.sort(key=lambda x: (x.get("time_ms", 0), x.get("id", "")))
-    if since_id:
+    if after_seq is not None:
+        valid_mem = [m for m in valid_mem if m.get("seq", 0) > after_seq]
+    elif since_id:
         idx = next((i for i, m in enumerate(valid_mem) if m.get("id") == since_id), -1)
         if idx != -1:
-            return valid_mem[idx + 1:]
+            valid_mem = valid_mem[idx + 1:]
+    valid_mem.sort(key=lambda x: (x.get("time_ms", 0), x.get("seq", 0), x.get("id", "")))
     return valid_mem
 
 async def save_settings(new_conf: dict):
@@ -337,6 +371,8 @@ class ChatPayload(BaseModel):
     audio: Optional[str] = None
     audio_duration: Optional[float] = None
     msg_id: Optional[str] = None
+    clientMessageId: Optional[str] = None
+    reply_to: Optional[dict] = None
     time_ms: Optional[int] = None
 
 class ReactionPayload(BaseModel):
@@ -372,6 +408,25 @@ class LetterPayload(BaseModel):
 # ─────────────────────────────────────────────
 # REST API: Authentication & Sessions
 # ─────────────────────────────────────────────
+
+async def find_existing_message(msg_id: Optional[str], client_id: Optional[str]) -> Optional[dict]:
+    ids = [x for x in [msg_id, client_id] if x]
+    if not ids:
+        return None
+    if messages_col is not None:
+        try:
+            found = await messages_col.find_one(
+                {"$or": [{"id": {"$in": ids}}, {"clientMessageId": {"$in": ids}}, {"client_message_id": {"$in": ids}}]},
+                {"_id": 0}
+            )
+            if found:
+                return found
+        except Exception:
+            pass
+    for m in memory_messages:
+        if m.get("id") in ids or m.get("clientMessageId") in ids or m.get("client_message_id") in ids:
+            return m
+    return None
 
 @app.post("/api/join")
 @app.post("/api/login")
@@ -427,10 +482,10 @@ async def join_room(req: JoinRequest, request: Request):
 # ─────────────────────────────────────────────
 
 @app.get("/api/messages")
-async def get_messages(since_id: Optional[str] = None, username: Optional[str] = None):
+async def get_messages(since_id: Optional[str] = None, after_seq: Optional[int] = None, username: Optional[str] = None):
     if username:
         room.touch(username)
-    msgs = await load_messages(since_id)
+    msgs = await load_messages(since_id=since_id, after_seq=after_seq)
     return {"messages": msgs}
 
 @app.post("/api/send")
@@ -439,7 +494,12 @@ async def send_message(msg: ChatPayload, request: Request):
     if not check_rate_limit(f"send_{client_ip}", max_calls=30, period=10.0):
         raise HTTPException(status_code=429, detail="Rate limit exceeded.")
 
-    message_id = msg.msg_id or f"m_{int(time.time()*1000)}_{random.randint(100, 999)}"
+    # Idempotency deduplication check
+    existing = await find_existing_message(msg.msg_id, msg.clientMessageId)
+    if existing:
+        return {"status": "ok", "message": existing, "duplicate": True}
+
+    message_id = msg.msg_id or msg.clientMessageId or f"m_{int(time.time()*1000)}_{random.randint(100, 999)}"
     now_ms = get_monotonic_time_ms()
 
     msg_type = "chat"
@@ -458,12 +518,14 @@ async def send_message(msg: ChatPayload, request: Request):
 
     chat_item = {
         "id": message_id,
+        "clientMessageId": msg.clientMessageId or message_id,
         "type": msg_type,
         "sender": msg.sender,
         "content": msg.content or "",
         "image": msg.image,
         "audio": msg.audio,
         "audio_duration": msg.audio_duration,
+        "reply_to": msg.reply_to,
         "timestamp": datetime.now().strftime("%H:%M"),
         "time_ms": now_ms,
         "expires_at": expires_at,
@@ -954,7 +1016,13 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                 continue
 
             # Standard chat / photo / audio message
-            message_id = data.get("msg_id") or f"m_{int(time.time()*1000)}_{random.randint(100, 999)}"
+            message_id = data.get("msg_id") or data.get("clientMessageId") or f"m_{int(time.time()*1000)}_{random.randint(100, 999)}"
+            client_msg_id = data.get("clientMessageId") or message_id
+
+            existing = await find_existing_message(message_id, client_msg_id)
+            if existing:
+                continue
+
             now_ms = get_monotonic_time_ms()
 
             resolved_type = "chat"
@@ -972,12 +1040,14 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
 
             chat_item = {
                 "id": message_id,
+                "clientMessageId": client_msg_id,
                 "type": resolved_type,
                 "sender": data.get("sender", username),
                 "content": data.get("content", ""),
                 "image": data.get("image"),
                 "audio": data.get("audio"),
                 "audio_duration": data.get("audio_duration"),
+                "reply_to": data.get("reply_to"),
                 "timestamp": datetime.now().strftime("%H:%M"),
                 "time_ms": now_ms,
                 "expires_at": expires_at,
@@ -997,6 +1067,34 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
         print(f"[WS Error] Exception with user {username}: {e}")
         room.release(username)
         await room.broadcast_users()
+
+# ─────────────────────────────────────────────
+# Media Upload API & Static Files
+# ─────────────────────────────────────────────
+
+uploads_dir = os.path.join(os.path.dirname(__file__), "uploads")
+os.makedirs(uploads_dir, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
+
+@app.post("/api/media")
+async def upload_media(file: UploadFile = File(...)):
+    """Upload photo/audio attachment safely."""
+    allowed_types = ["image/jpeg", "image/png", "image/webp", "audio/webm", "audio/ogg", "audio/mp4", "audio/wav"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Invalid media type.")
+
+    ext = os.path.splitext(file.filename or "")[1] or ".bin"
+    safe_name = f"media_{int(time.time()*1000)}_{secrets.token_hex(6)}{ext}"
+    dest_path = os.path.join(uploads_dir, safe_name)
+
+    content = await file.read()
+    if len(content) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large (max 15MB).")
+
+    with open(dest_path, "wb") as f:
+        f.write(content)
+
+    return {"ok": True, "url": f"/uploads/{safe_name}", "filename": safe_name}
 
 # ─────────────────────────────────────────────
 # Static files & Index
