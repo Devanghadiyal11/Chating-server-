@@ -400,9 +400,24 @@ async def toggle_reaction(req: ReactionPayload):
     await room.broadcast(event)
     return {"status": "ok", "reactions": reactions}
 
+# Cooldown tracking for Love Nudge (prevents spam and server/device load)
+NUDGE_COOLDOWN_SEC = 4.0
+last_nudge_times: Dict[str, float] = {}
+
 @app.post("/api/nudge")
 async def send_nudge(req: NudgePayload):
-    now_ms = int(time.time() * 1000)
+    sender = req.sender.strip().lower()
+    now = time.time()
+    last_time = last_nudge_times.get(sender, 0)
+    if now - last_time < NUDGE_COOLDOWN_SEC:
+        remaining = int(NUDGE_COOLDOWN_SEC - (now - last_time)) + 1
+        return JSONResponse(
+            status_code=429,
+            content={"status": "cooldown", "detail": f"Please wait {remaining}s before sending another love ping!"}
+        )
+    last_nudge_times[sender] = now
+
+    now_ms = int(now * 1000)
     event = {
         "type": "nudge",
         "sender": req.sender,
@@ -496,7 +511,19 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                 continue
 
             elif msg_type == "nudge":
-                await send_nudge(NudgePayload(sender=username))
+                sender_key = username.strip().lower()
+                now = time.time()
+                if now - last_nudge_times.get(sender_key, 0) < NUDGE_COOLDOWN_SEC:
+                    continue  # Ignore spam during cooldown
+                last_nudge_times[sender_key] = now
+                now_ms = int(now * 1000)
+                room.touch(username)
+                await room.broadcast({
+                    "type": "nudge",
+                    "sender": username,
+                    "timestamp": datetime.now().strftime("%H:%M"),
+                    "time_ms": now_ms
+                })
                 continue
 
             elif msg_type == "delete_message":

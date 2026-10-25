@@ -327,6 +327,15 @@
       0%, 100% { transform: scale(1); }
       50%      { transform: scale(1.08); }
     }
+    .icon-btn.heart-btn.cooldown,
+    .btn-tool.cooldown {
+      animation: none !important;
+      opacity: 0.65;
+      cursor: not-allowed;
+      font-size: 0.8rem !important;
+      font-weight: 800;
+      color: var(--accent) !important;
+    }
 
     /* ─── Messages Stream ─── */
     .messages-area {
@@ -999,7 +1008,7 @@
 
       <div class="header-right">
         <!-- Love Nudge / Thinking of you -->
-        <button class="icon-btn heart-btn" onclick="sendNudge()" title="Send Love / Thinking of You!">
+        <button class="icon-btn heart-btn" id="headerNudgeBtn" onclick="sendNudge()" title="Send Love / Thinking of You!">
           💖
         </button>
         <!-- Sound Toggle -->
@@ -1075,7 +1084,7 @@
         ></textarea>
 
         <!-- Love Nudge Mini Button -->
-        <button class="btn-tool" onclick="sendNudge()" title="Love Nudge" aria-label="Send love nudge">
+        <button class="btn-tool" id="chatNudgeBtn" onclick="sendNudge()" title="Love Nudge" aria-label="Send love nudge">
           💖
         </button>
 
@@ -1697,8 +1706,20 @@
     closeProfileModal();
   }
 
-  // ── Love Nudge & Floating Hearts ──────────────
+  // ── Love Nudge & Cooldown ─────────────────────
+  let nudgeCooldown = false;
+  let nudgeCooldownRemaining = 0;
+  let nudgeCooldownInterval = null;
+
   async function sendNudge() {
+    if (nudgeCooldown) {
+      showCooldownHint();
+      return;
+    }
+
+    // Start 5-second cooldown
+    startNudgeCooldown(5);
+
     burstHearts(30);
     playLoveNudgeChime();
     if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
@@ -1712,6 +1733,53 @@
         body: JSON.stringify({ sender: currentUser })
       });
     }
+  }
+
+  function startNudgeCooldown(seconds = 5) {
+    nudgeCooldown = true;
+    nudgeCooldownRemaining = seconds;
+
+    const btn1 = document.getElementById("headerNudgeBtn");
+    const btn2 = document.getElementById("chatNudgeBtn");
+
+    const updateBtns = () => {
+      if (btn1) {
+        btn1.classList.add("cooldown");
+        btn1.textContent = `${nudgeCooldownRemaining}s`;
+      }
+      if (btn2) {
+        btn2.classList.add("cooldown");
+        btn2.textContent = `${nudgeCooldownRemaining}s`;
+      }
+    };
+
+    updateBtns();
+
+    if (nudgeCooldownInterval) clearInterval(nudgeCooldownInterval);
+    nudgeCooldownInterval = setInterval(() => {
+      nudgeCooldownRemaining--;
+      if (nudgeCooldownRemaining <= 0) {
+        clearInterval(nudgeCooldownInterval);
+        nudgeCooldown = false;
+        if (btn1) {
+          btn1.classList.remove("cooldown");
+          btn1.textContent = "💖";
+        }
+        if (btn2) {
+          btn2.classList.remove("cooldown");
+          btn2.textContent = "💖";
+        }
+      } else {
+        updateBtns();
+      }
+    }, 1000);
+  }
+
+  function showCooldownHint() {
+    const toast = document.getElementById("nudgeToast");
+    document.getElementById("nudgeText").textContent = `Wait ${nudgeCooldownRemaining}s before sending another love ping 💕`;
+    toast.classList.add("active");
+    setTimeout(() => toast.classList.remove("active"), 2200);
   }
 
   function handleIncomingNudge(msg) {
