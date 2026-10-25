@@ -56,19 +56,59 @@ A private, secure, and romantic real-time chat application built exclusively for
 
 ---
 
-## 🚀 Running the Server
+## 📁 Project Architecture (2 Main Folders)
 
-### 1. Install dependencies
-```bash
-pip install -r requirements.txt
+```
+Server/
+├── backend/                  # 1. FastAPI & WebSocket Server
+│   ├── server.py             # App, WebSocket hub, Monotonic seq, MongoDB sync
+│   ├── client.py             # CLI test client
+│   ├── test_app.py           # Test suite
+│   ├── requirements.txt      # Python dependencies
+│   ├── Procfile              # Render deployment configuration
+│   ├── static/               # Legacy static web UI fallback
+│   └── uploads/              # Media attachment storage
+│
+├── frontend/                 # 2. Next.js 16 Modern Client (Deploy on Vercel)
+│   ├── src/
+│   │   ├── app/              # App Router (page.tsx, layout.tsx, globals.css)
+│   │   ├── components/       # Header, ChatInput, MessageList, QuickBar, Modals
+│   │   └── lib/              # Types, Audio, IndexedDB offline queue, Config
+│   ├── public/               # manifest.json, icon.svg, PWA assets
+│   ├── package.json          # Dependencies & scripts
+│   └── next.config.ts        # Next.js configuration
+│
+├── Procfile                  # Root Render runner
+├── requirements.txt          # Root Python dependencies
+└── README.md
 ```
 
-### 2. Start the server
+---
+
+## 🚀 Running the Project
+
+### 1. Run the Backend (`backend/`)
 ```bash
+cd backend
+pip install -r requirements.txt
 python server.py
 ```
-- Local access: `http://127.0.0.1:8000`
-- Network access: `http://<your-ip>:8000`
+* Runs on: `http://localhost:8000` (REST & WebSockets)
+
+### 2. Run the Frontend (`frontend/`)
+```bash
+cd frontend
+npm install
+npm run dev
+```
+* Runs on: `http://localhost:3000`
+
+---
+
+## ☁️ Deployment
+
+* **Backend**: Deploy on [Render](https://render.com) using repository root or `backend/` directory.
+* **Frontend**: Deploy on [Vercel](https://vercel.com) from `https://github.com/Devanghadiyal11/Chating-Frontend.git`.
 
 ---
 
