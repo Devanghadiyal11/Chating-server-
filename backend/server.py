@@ -535,15 +535,20 @@ async def join_room(req: JoinRequest, request: Request):
     if not username:
         raise HTTPException(status_code=400, detail="Username is required.")
 
+    # Canonicalize to Him or Her on behalf of dynamic usernames
+    if username.lower() in ["him", "he", "boy", "boyfriend", "hubby"]:
+        username = "Him"
+    elif username.lower() in ["her", "she", "girl", "girlfriend", "wifey", "hew"]:
+        username = "Her"
+
     user_lower = username.lower()
     active_users_lower = {s["username"].lower() for s in active_sessions.values()}
 
-    # Strict 2-account authorization
+    # Strict 2-account couple authorization (Him & Her)
     if len(active_users_lower) >= MAX_USERS and user_lower not in active_users_lower:
-        # Check if one of the users has been inactive for > 10 minutes
         now = time.time()
         for tok, info in list(active_sessions.items()):
-            if now - info.get("created_at", 0) > 86400: # rotate stale sessions
+            if now - info.get("created_at", 0) > 86400:
                 active_sessions.pop(tok, None)
 
     # Generate cryptographically secure session token
