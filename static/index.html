@@ -932,21 +932,140 @@
       .sidebar-backdrop.active { opacity: 1; pointer-events: auto; }
       
       .mobile-menu-btn { display: flex !important; }
-      .chat-header { padding: calc(8px + env(safe-area-inset-top, 0px)) 12px 8px; }
-      .messages-area { padding: 12px 10px 8px; gap: 9px; }
+      .chat-header { padding: calc(8px + env(safe-area-inset-top, 0px)) 10px 8px; }
+      .messages-area { padding: 10px 8px 6px; gap: 8px; }
       
-      .msg-row { max-width: 86%; }
-      .chat-bottom { padding: 6px 10px calc(8px + env(safe-area-inset-bottom, 0px)); }
+      .msg-row { max-width: 88%; }
+      .chat-bottom { padding: 6px 8px calc(8px + env(safe-area-inset-bottom, 0px)); }
       
+      .icon-btn { width: 38px; height: 38px; font-size: 1.05rem; border-radius: 10px; }
+      .header-right { gap: 4px; }
+      .chat-title-wrap { max-width: 140px; }
+      .chat-room-title { font-size: 0.88rem; }
+      .together-header-pill { font-size: 0.65rem; }
+
       .btn-send span { display: none; }
-      .btn-send { padding: 0 14px; width: 44px; justify-content: center; }
-      .btn-tool { width: 42px; height: 42px; }
+      .btn-send { padding: 0 12px; width: 42px; min-height: 42px; justify-content: center; }
+      .btn-tool { width: 40px; height: 40px; }
       
       .chat-input { padding: 10px 12px; font-size: 16px !important; }
       .photo-secure-wrapper, .chat-photo { max-width: min(220px, 68vw) !important; max-height: 180px !important; }
       
       /* Make inputs 16px to prevent iOS camera zoom */
       input, textarea, select { font-size: 16px !important; }
+
+      /* Modals full width bottom-sheet on mobile */
+      .modal-card {
+        border-radius: 22px 22px 0 0 !important;
+        max-width: 100% !important;
+        margin-top: auto;
+      }
+      .modal-overlay {
+        padding: 0 !important;
+        align-items: flex-end !important;
+      }
+    }
+
+    /* ─── Couple Quick Access Bar (Horizontal scroll on mobile) ─── */
+    .couple-quick-bar {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 12px;
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+      white-space: nowrap;
+      -webkit-overflow-scrolling: touch;
+      flex-shrink: 0;
+      z-index: 9;
+    }
+    .couple-quick-bar::-webkit-scrollbar { display: none; }
+    .quick-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 12px;
+      border-radius: 20px;
+      background: var(--bg-root);
+      border: 1px solid var(--border);
+      color: var(--text-main);
+      font-size: 0.76rem;
+      font-weight: 700;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+    }
+    .quick-pill:active {
+      transform: scale(0.95);
+      border-color: var(--accent);
+      background: var(--accent-dim);
+    }
+    .quick-pill.theme-quick-pill {
+      border-color: var(--accent);
+      background: var(--accent-dim);
+      color: #fff;
+    }
+    .quick-pill-emoji {
+      font-size: 0.95rem;
+    }
+
+    /* ─── Synced Theme Modal & Cards ─── */
+    .theme-select-list {
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    }
+    .theme-select-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      border-radius: 14px;
+      background: var(--bg-root);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      user-select: none;
+    }
+    .theme-select-card:active {
+      transform: scale(0.98);
+    }
+    .theme-select-card.selected {
+      border-color: var(--accent);
+      background: var(--accent-dim);
+      box-shadow: 0 0 14px var(--accent-glow);
+    }
+    .theme-color-preview {
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      flex-shrink: 0;
+    }
+    .theme-select-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .theme-select-name {
+      font-size: 0.88rem;
+      font-weight: 800;
+      color: #fff;
+    }
+    .theme-select-desc {
+      font-size: 0.72rem;
+      color: var(--text-sub);
+      margin-top: 1px;
+    }
+    .theme-active-check {
+      display: none;
+      font-size: 1.1rem;
+      font-weight: 800;
+      color: var(--accent);
+      margin-right: 4px;
+    }
+    .theme-select-card.selected .theme-active-check {
+      display: block;
     }
 
     /* ─── Message Delivery Status Indicators ─── */
@@ -1405,21 +1524,9 @@
       </div>
 
       <div class="header-right">
-        <!-- Daily Check-In & Mood -->
-        <button class="icon-btn" onclick="openCheckInModal()" title="Daily Check-In & Mood">
-          🥰
-        </button>
-        <!-- Open-When Letters -->
-        <button class="icon-btn" onclick="openLettersModal()" title="Open-When Letters 💌">
-          💌
-        </button>
-        <!-- Relationship Timeline -->
-        <button class="icon-btn" onclick="openTimelineModal()" title="Relationship Timeline ⏳">
-          ⏳
-        </button>
-        <!-- Memories Gallery -->
-        <button class="icon-btn" onclick="openMemoriesModal()" title="Shared Memory Gallery 📸">
-          📸
+        <!-- Synced Theme Picker -->
+        <button class="icon-btn" onclick="openThemeModal()" title="Change Synced Theme 🎨">
+          🎨
         </button>
         <!-- Love Nudge / Thinking of you -->
         <button class="icon-btn heart-btn" id="headerNudgeBtn" onclick="sendNudge()" title="Send Love / Thinking of You!">
@@ -1435,6 +1542,30 @@
         </button>
       </div>
     </header>
+
+    <!-- Couple Quick Access Bar (Horizontal scroll on mobile) -->
+    <div class="couple-quick-bar" id="coupleQuickBar">
+      <button class="quick-pill theme-quick-pill" onclick="openThemeModal()">
+        <span class="quick-pill-emoji" id="quickThemeDot">🌸</span>
+        <span>Theme</span>
+      </button>
+      <button class="quick-pill" onclick="openCheckInModal()">
+        <span class="quick-pill-emoji">🥰</span>
+        <span>Daily Check-In</span>
+      </button>
+      <button class="quick-pill" onclick="openLettersModal()">
+        <span class="quick-pill-emoji">💌</span>
+        <span>Letters</span>
+      </button>
+      <button class="quick-pill" onclick="openTimelineModal()">
+        <span class="quick-pill-emoji">⏳</span>
+        <span>Timeline</span>
+      </button>
+      <button class="quick-pill" onclick="openMemoriesModal()">
+        <span class="quick-pill-emoji">📸</span>
+        <span>Memories</span>
+      </button>
+    </div>
 
     <!-- Daily Check-In Collapsible Banner -->
     <div class="checkin-banner" id="checkinBanner" onclick="openCheckInModal()">
@@ -1879,6 +2010,67 @@
   </div>
 </div>
 
+<!-- Synced Couple Theme Modal -->
+<div class="modal-overlay" id="themeModal" style="display:none;">
+  <div class="modal-card">
+    <div class="modal-banner">
+      <div style="font-size:2.5rem;margin-bottom:4px;">🎨</div>
+      <h2>Couple Theme 💕</h2>
+      <p style="font-size:0.8rem;opacity:0.9;">Changing theme changes it in real time for BOTH of you!</p>
+    </div>
+    <div class="modal-body">
+      <div class="theme-select-list">
+        <div class="theme-select-card" data-theme="rose" onclick="setTheme('rose');closeThemeModal();">
+          <div class="theme-color-preview" style="background:linear-gradient(135deg, #e11d48, #0c0a10);border:2px solid #e11d48;"></div>
+          <div class="theme-select-info">
+            <div class="theme-select-name">🌸 Rose Blossom</div>
+            <div class="theme-select-desc">Romantic dark rose & glowing pink</div>
+          </div>
+          <div class="theme-active-check">✓</div>
+        </div>
+
+        <div class="theme-select-card" data-theme="lavender" onclick="setTheme('lavender');closeThemeModal();">
+          <div class="theme-color-preview" style="background:linear-gradient(135deg, #7c3aed, #090814);border:2px solid #7c3aed;"></div>
+          <div class="theme-select-info">
+            <div class="theme-select-name">💜 Midnight Lavender</div>
+            <div class="theme-select-desc">Dreamy purple night with soft glow</div>
+          </div>
+          <div class="theme-active-check">✓</div>
+        </div>
+
+        <div class="theme-select-card" data-theme="sunset" onclick="setTheme('sunset');closeThemeModal();">
+          <div class="theme-color-preview" style="background:linear-gradient(135deg, #ea580c, #130a0a);border:2px solid #ea580c;"></div>
+          <div class="theme-select-info">
+            <div class="theme-select-name">🌅 Sunset Warmth</div>
+            <div class="theme-select-desc">Golden amber warmth & sweet sunset</div>
+          </div>
+          <div class="theme-active-check">✓</div>
+        </div>
+
+        <div class="theme-select-card" data-theme="noir" onclick="setTheme('noir');closeThemeModal();">
+          <div class="theme-color-preview" style="background:linear-gradient(135deg, #ff2e93, #000000);border:2px solid #ff2e93;"></div>
+          <div class="theme-select-info">
+            <div class="theme-select-name">🌙 OLED Noir</div>
+            <div class="theme-select-desc">Pure ink black with cyber neon pink</div>
+          </div>
+          <div class="theme-active-check">✓</div>
+        </div>
+
+        <div class="theme-select-card" data-theme="cream" onclick="setTheme('cream');closeThemeModal();">
+          <div class="theme-color-preview" style="background:linear-gradient(135deg, #e05d76, #faf5ef);border:2px solid #e05d76;"></div>
+          <div class="theme-select-info">
+            <div class="theme-select-name">☁️ Cozy Cream</div>
+            <div class="theme-select-desc">Warm aesthetic daylight & gentle rose</div>
+          </div>
+          <div class="theme-active-check">✓</div>
+        </div>
+      </div>
+
+      <button class="btn-sm" style="margin-top:6px;" onclick="closeThemeModal()">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- Login / Entry Modal -->
 <div class="modal-overlay" id="loginOverlay">
   <div class="modal-card">
@@ -2032,6 +2224,14 @@
     cream: "☁️ Cozy Cream"
   };
 
+  const THEME_ICONS = {
+    rose: "🌸",
+    lavender: "💜",
+    sunset: "🌅",
+    noir: "🌙",
+    cream: "☁️"
+  };
+
   const THEME_COLORS = {
     rose: "#0c0a10",
     lavender: "#090814",
@@ -2045,10 +2245,21 @@
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("couple_theme", theme);
 
-    // Update active highlight on theme chips
+    // Update active highlight on sidebar chips
     document.querySelectorAll(".theme-chip").forEach(c => {
       c.classList.toggle("active", c.title.toLowerCase().includes(theme));
     });
+
+    // Update active highlight on Theme Modal cards
+    document.querySelectorAll(".theme-select-card").forEach(c => {
+      c.classList.toggle("selected", c.dataset.theme === theme);
+    });
+
+    // Update quick pill emoji
+    const dot = document.getElementById("quickThemeDot");
+    if (dot) {
+      dot.textContent = THEME_ICONS[theme] || "🎨";
+    }
 
     // Update mobile address bar meta color
     const metaTheme = document.querySelector('meta[name="theme-color"]');
@@ -2058,28 +2269,42 @@
   }
 
   function setTheme(theme) {
+    if (!theme) return;
     applyTheme(theme);
+    burstHearts(20);
 
-    // Sync theme change in real time across BOTH devices!
+    // Sync theme change in real time across BOTH devices via WebSocket & REST!
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "theme_change", theme }));
-    } else {
-      fetch("/api/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ theme })
-      });
     }
+    fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      body: JSON.stringify({ theme })
+    }).catch(() => {});
+  }
+
+  function openThemeModal() {
+    const curTheme = document.documentElement.getAttribute("data-theme") || "rose";
+    document.querySelectorAll(".theme-select-card").forEach(c => {
+      c.classList.toggle("selected", c.dataset.theme === curTheme);
+    });
+    document.getElementById("themeModal").style.display = "flex";
+  }
+
+  function closeThemeModal() {
+    document.getElementById("themeModal").style.display = "none";
   }
 
   function showThemeChangeNotification(sender, theme) {
     const prettyName = THEME_NAMES[theme] || theme;
     const toast = document.getElementById("nudgeToast");
-    document.getElementById("nudgeText").textContent = `${sender || 'Your partner'} changed our theme to ${prettyName} ✨`;
+    document.getElementById("nudgeText").textContent = `${sender || 'Your partner'} matched our theme to ${prettyName} ✨`;
     toast.classList.add("active");
     playTone(587.33, 'sine', 0.2, 0); // D5
     playTone(880, 'sine', 0.35, 0.1); // A5
-    setTimeout(() => toast.classList.remove("active"), 4000);
+    burstHearts(18);
+    setTimeout(() => toast.classList.remove("active"), 4500);
   }
 
   // ── Mobile Visual Viewport Handling (Glues chat bar to keyboard) ──
@@ -2116,9 +2341,10 @@
   window.addEventListener("DOMContentLoaded", () => {
     setupMobileViewport();
 
-    // Restore theme
-    const savedTheme = localStorage.getItem("couple_theme") || "rose";
-    setTheme(savedTheme);
+    // Visual theme preview from local storage without overriding server
+    const cachedTheme = localStorage.getItem("couple_theme") || "rose";
+    applyTheme(cachedTheme);
+    loadSettings();
 
     // Check URL parameters e.g. ?name=Dev&pin=1012
     const params = new URLSearchParams(window.location.search);

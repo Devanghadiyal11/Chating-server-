@@ -610,6 +610,12 @@ async def update_settings(payload: SettingsPayload):
 
     if updates:
         await save_settings(updates)
+        if "theme" in updates:
+            await room.broadcast({
+                "type": "theme_update",
+                "theme": updates["theme"],
+                "sender": "Partner"
+            })
         await room.broadcast({
             "type": "settings_update",
             "settings": settings_cache
@@ -845,6 +851,17 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
     room.touch(username)
 
     await room.broadcast_users()
+
+    # Instantly sync current couple theme & settings to connecting client
+    await websocket.send_json({
+        "type": "theme_update",
+        "theme": settings_cache.get("theme", "rose"),
+        "sender": "system"
+    })
+    await websocket.send_json({
+        "type": "settings_update",
+        "settings": settings_cache
+    })
 
     # Inform sender that their partner is now online (auto-mark pending as delivered)
     await room.broadcast({
