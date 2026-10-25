@@ -162,6 +162,14 @@ async def lifespan(app: FastAPI):
             pass
         print(f"[DB] Connected to MongoDB Atlas - {DB_NAME}")
 
+        # Ephemeral mode: wipe any previous persistent chat documents from database storage
+        try:
+            await messages_col.delete_many({})
+            await events_col.delete_many({})
+            print("[Storage] Ephemeral mode: wiped any stored chats.")
+        except Exception:
+            pass
+
         # Load persisted settings
         stored_conf = await settings_col.find_one({"_id": "couple_settings"}, {"_id": 0})
         if stored_conf:
@@ -300,7 +308,7 @@ async def db_persist_seq(seq: int):
         pass
 
 async def save_message(msg: dict):
-    """Allocates sequence and stores in memory immediately, persists to MongoDB asynchronously."""
+    """Zero storage: kept strictly in memory for live relay between connected users."""
     global memory_messages
     if msg.get("seq") is None:
         msg["seq"] = get_next_seq()
@@ -313,53 +321,12 @@ async def save_message(msg: dict):
         recent_msg_ids.clear()
 
     memory_messages.append(msg)
-    if len(memory_messages) > 1200:
+    if len(memory_messages) > 500:
         memory_messages.pop(0)
 
-    # Persist to MongoDB concurrently in background task without blocking live broadcast!
-    if messages_col is not None:
-        asyncio.create_task(db_save_message(msg))
-
-async def db_save_message(msg: dict):
-    try:
-        doc = {k: v for k, v in msg.items()}
-        await messages_col.update_one({"id": msg["id"]}, {"$set": doc}, upsert=True)
-    except Exception as e:
-        print(f"[DB Error] Error saving message {msg.get('id')}: {e}")
-
 async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int] = None) -> List[dict]:
-    """Load messages sorted strictly by seq and (time_ms, id) ascending."""
+    """Ephemeral in-memory messages only."""
     now_ms = int(time.time() * 1000)
-    query: Dict[str, Any] = {
-        "$or": [
-            {"expires_at": None},
-            {"expires_at": {"$gt": now_ms}}
-        ]
-    }
-
-    if after_seq is not None:
-        query["seq"] = {"$gt": after_seq}
-    elif since_id:
-        if messages_col is not None:
-            try:
-                anchor = await messages_col.find_one({"id": since_id}, {"time_ms": 1, "seq": 1})
-                if anchor:
-                    if "seq" in anchor:
-                        query["seq"] = {"$gt": anchor["seq"]}
-                    else:
-                        query["time_ms"] = {"$gt": anchor["time_ms"]}
-            except Exception:
-                pass
-
-    if messages_col is not None:
-        try:
-            cursor = messages_col.find(query, {"_id": 0}).sort("time_ms", 1)
-            msgs = await cursor.to_list(length=3000)
-            return msgs
-        except Exception as e:
-            print(f"[DB Error] Falling back to memory: {e}")
-
-    # Fallback to in-memory messages
     valid_mem = [
         m for m in memory_messages
         if not (m.get("expires_at") and m["expires_at"] < now_ms)
@@ -459,17 +426,7 @@ async def publish_event(
             "id": f"m_{int(time.time()*1000)}_clear"
         })
 
-    # 3. Asynchronously persist to MongoDB in background
-    if events_col is not None:
-        asyncio.create_task(db_save_event(event_doc))
-
     return event_doc
-
-async def db_save_event(event_doc: dict):
-    try:
-        await events_col.insert_one(event_doc.copy())
-    except Exception as e:
-        print(f"[Event DB Save Error] {e}")
 
 # ─────────────────────────────────────────────
 # Pydantic Models
@@ -751,10 +708,15 @@ async def delete_single_message(msg_id: str):
 
 @app.delete("/api/messages")
 async def clear_messages():
-    if messages_col is not None:
-        await messages_col.delete_many({})
-    global memory_messages
+    global memory_messages, memory_events, recent_msg_ids
     memory_messages = []
+    memory_events = []
+    recent_msg_ids = set()
+    if messages_col is not None:
+        try:
+            await messages_col.delete_many({})
+        except Exception:
+            pass
 
     await publish_event("chat.cleared", "system", {"timestamp": datetime.now().strftime("%H:%M")})
     return {"status": "cleared"}
@@ -765,21 +727,8 @@ async def clear_messages():
 
 @app.get("/api/events")
 async def get_events(after_seq: Optional[int] = None, limit: int = 250):
-    """Retrieve event stream after a given sequence number for automatic reconnect catch-up."""
+    """Retrieve active live session events. Zero database persistence."""
     limit = min(max(1, limit), 500)
-    query: Dict[str, Any] = {}
-    if after_seq is not None:
-        query["seq"] = {"$gt": after_seq}
-
-    if events_col is not None:
-        try:
-            cursor = events_col.find(query, {"_id": 0}).sort("seq", 1).limit(limit)
-            events = await cursor.to_list(length=limit)
-            return {"events": events}
-        except Exception as e:
-            print(f"[DB Error] Fetching events: {e}")
-
-    # Fallback to in-memory events
     mem = memory_events
     if after_seq is not None:
         mem = [ev for ev in mem if ev.get("seq", 0) > after_seq]
@@ -994,10 +943,19 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
     except WebSocketDisconnect:
         room.release(username)
         await room.broadcast_users()
+        # Ephemeral mode: when all users disconnect, wipe live chat from memory
+        if len(room.connections) == 0:
+            memory_messages.clear()
+            memory_events.clear()
+            recent_msg_ids.clear()
     except Exception as e:
         print(f"[WS Error] Exception with user {username}: {e}")
         room.release(username)
         await room.broadcast_users()
+        if len(room.connections) == 0:
+            memory_messages.clear()
+            memory_events.clear()
+            recent_msg_ids.clear()
 
 # ─────────────────────────────────────────────
 # Media Upload API & Static Files
