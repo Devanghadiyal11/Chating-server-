@@ -949,6 +949,272 @@
       input, textarea, select { font-size: 16px !important; }
     }
 
+    /* ─── Message Delivery Status Indicators ─── */
+    .msg-status {
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: var(--text-sub);
+      opacity: 0.65;
+      user-select: none;
+      margin-left: 3px;
+      display: inline-block;
+      vertical-align: middle;
+      transition: all 0.2s ease;
+    }
+    .msg-status.status-pending { opacity: 0.5; font-size: 0.66rem; }
+    .msg-status.status-delivered { opacity: 0.95; color: var(--text-main); }
+    .msg-status.status-seen { color: var(--accent); opacity: 1; }
+
+    /* ─── Couple Hub Navigation & Widgets ─── */
+    .hub-tile-btn {
+      background: var(--bg-root);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      color: var(--text-main);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      user-select: none;
+    }
+    .hub-tile-btn:active {
+      transform: scale(0.96);
+      border-color: var(--accent);
+      background: var(--accent-dim);
+    }
+
+    .checkin-banner {
+      background: linear-gradient(90deg, var(--accent-dim), transparent);
+      border-bottom: 1px solid var(--border);
+      padding: 8px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.2s;
+      z-index: 10;
+      flex-shrink: 0;
+    }
+    .checkin-banner:active { background: var(--accent-dim); }
+    .checkin-banner-content { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .checkin-banner-mood {
+      font-size: 1.35rem; width: 34px; height: 34px; border-radius: 50%;
+      background: var(--bg-card); border: 1px solid var(--accent);
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .checkin-banner-text { display: flex; flex-direction: column; min-width: 0; }
+    .checkin-banner-title { font-size: 0.8rem; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .checkin-banner-sub { font-size: 0.71rem; color: var(--text-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Large & Scrollable Modal Styles */
+    .modal-card.large {
+      max-width: 520px;
+      max-height: 88vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .modal-scrollable {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .modal-scrollable::-webkit-scrollbar { width: 4px; }
+    .modal-scrollable::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    /* Mood selector */
+    .mood-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+    .mood-chip {
+      background: var(--bg-root);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 8px 4px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+      transition: all 0.15s;
+      user-select: none;
+    }
+    .mood-chip:active { transform: scale(0.95); }
+    .mood-chip.selected {
+      border-color: var(--accent);
+      background: var(--accent-dim);
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+    .mood-chip-emoji { font-size: 1.45rem; }
+    .mood-chip-label { font-size: 0.7rem; font-weight: 600; color: var(--text-main); }
+
+    /* Partner mood box */
+    .partner-mood-box {
+      background: var(--bg-root);
+      border: 1px dashed var(--accent);
+      border-radius: 14px;
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    /* Timeline */
+    .timeline-list { display: flex; flex-direction: column; gap: 10px; }
+    .timeline-card {
+      background: var(--bg-root);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .timeline-card-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .timeline-icon {
+      width: 42px; height: 42px; border-radius: 12px;
+      background: var(--accent-dim);
+      border: 1px solid var(--accent);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.4rem; flex-shrink: 0;
+    }
+    .timeline-title { font-size: 0.88rem; font-weight: 700; color: #fff; }
+    .timeline-date { font-size: 0.74rem; color: var(--text-sub); margin-top: 2px; }
+    .timeline-badge {
+      padding: 4px 8px; border-radius: 20px;
+      background: var(--mine-bg); color: #fff;
+      font-size: 0.7rem; font-weight: 800; white-space: nowrap; flex-shrink: 0;
+    }
+
+    /* Letters */
+    .letters-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    @media (max-width: 480px) {
+      .letters-grid { grid-template-columns: 1fr; }
+    }
+    .letter-envelope-card {
+      background: var(--bg-root);
+      border: 1px dashed var(--border);
+      border-radius: 14px;
+      padding: 14px 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      position: relative;
+    }
+    .letter-envelope-card:active { transform: scale(0.98); }
+    .letter-envelope-card.sealed {
+      border-color: var(--accent);
+      background: linear-gradient(180deg, var(--accent-dim), transparent);
+    }
+    .letter-envelope-card.opened {
+      opacity: 0.85;
+      border-style: solid;
+    }
+    .letter-wax-seal {
+      font-size: 2.2rem;
+      margin-bottom: 6px;
+      animation: pulseSeal 3s infinite ease-in-out;
+    }
+    @keyframes pulseSeal {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+    }
+    .letter-card-title {
+      font-size: 0.84rem;
+      font-weight: 800;
+      color: #fff;
+      line-height: 1.3;
+    }
+    .letter-card-sub {
+      font-size: 0.7rem;
+      color: var(--text-sub);
+      margin-top: 4px;
+    }
+
+    /* Memories Gallery */
+    .memories-tabs {
+      display: flex;
+      gap: 8px;
+    }
+    .mem-tab-btn {
+      flex: 1;
+      padding: 8px 6px;
+      border-radius: 10px;
+      background: var(--bg-root);
+      border: 1px solid var(--border);
+      color: var(--text-sub);
+      font-size: 0.78rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .mem-tab-btn.active {
+      background: var(--mine-bg);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .memories-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+    .memory-thumb-card {
+      position: relative;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      aspect-ratio: 4/3;
+      background: var(--bg-root);
+      cursor: pointer;
+    }
+    .memory-thumb-card img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      pointer-events: none;
+    }
+    .memory-thumb-badge {
+      position: absolute;
+      bottom: 6px;
+      left: 6px;
+      right: 6px;
+      background: rgba(0,0,0,0.65);
+      backdrop-filter: blur(4px);
+      padding: 3px 6px;
+      border-radius: 6px;
+      font-size: 0.68rem;
+      color: #fff;
+      display: flex;
+      justify-content: space-between;
+    }
+    .memory-audio-card {
+      background: var(--bg-root);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
     @media print { body, .app-layout, .lightbox { display: none !important; } }
   </style>
 </head>
@@ -1028,6 +1294,29 @@
         <div class="days-widget" onclick="openAnniversaryModal()">
           <div class="days-num" id="sidebarDaysNum">0</div>
           <div class="days-caption" id="sidebarDaysCaption">Days of Loving You 💕</div>
+        </div>
+      </div>
+
+      <!-- Couple Special Moments Hub -->
+      <div class="card">
+        <div class="card-title">Our Special Moments 💕</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px;">
+          <button class="hub-tile-btn" onclick="openCheckInModal();closeSidebar();">
+            <span style="font-size:1.3rem;">🥰</span>
+            <span style="font-size:0.73rem;font-weight:700;">Daily Check-In</span>
+          </button>
+          <button class="hub-tile-btn" onclick="openTimelineModal();closeSidebar();">
+            <span style="font-size:1.3rem;">⏳</span>
+            <span style="font-size:0.73rem;font-weight:700;">Timeline</span>
+          </button>
+          <button class="hub-tile-btn" onclick="openLettersModal();closeSidebar();">
+            <span style="font-size:1.3rem;">💌</span>
+            <span style="font-size:0.73rem;font-weight:700;">Letters</span>
+          </button>
+          <button class="hub-tile-btn" onclick="openMemoriesModal();closeSidebar();">
+            <span style="font-size:1.3rem;">📸</span>
+            <span style="font-size:0.73rem;font-weight:700;">Memories</span>
+          </button>
         </div>
       </div>
 
@@ -1116,6 +1405,22 @@
       </div>
 
       <div class="header-right">
+        <!-- Daily Check-In & Mood -->
+        <button class="icon-btn" onclick="openCheckInModal()" title="Daily Check-In & Mood">
+          🥰
+        </button>
+        <!-- Open-When Letters -->
+        <button class="icon-btn" onclick="openLettersModal()" title="Open-When Letters 💌">
+          💌
+        </button>
+        <!-- Relationship Timeline -->
+        <button class="icon-btn" onclick="openTimelineModal()" title="Relationship Timeline ⏳">
+          ⏳
+        </button>
+        <!-- Memories Gallery -->
+        <button class="icon-btn" onclick="openMemoriesModal()" title="Shared Memory Gallery 📸">
+          📸
+        </button>
         <!-- Love Nudge / Thinking of you -->
         <button class="icon-btn heart-btn" id="headerNudgeBtn" onclick="sendNudge()" title="Send Love / Thinking of You!">
           💖
@@ -1130,6 +1435,18 @@
         </button>
       </div>
     </header>
+
+    <!-- Daily Check-In Collapsible Banner -->
+    <div class="checkin-banner" id="checkinBanner" onclick="openCheckInModal()">
+      <div class="checkin-banner-content">
+        <span class="checkin-banner-mood" id="bannerPartnerMood">🥰</span>
+        <div class="checkin-banner-text">
+          <div class="checkin-banner-title" id="bannerCheckinTitle">Daily Check-In: How was your day?</div>
+          <div class="checkin-banner-sub" id="bannerCheckinSub">Tap to share your mood & see hers 💕</div>
+        </div>
+      </div>
+      <span style="font-size:1.1rem;color:var(--accent);font-weight:800;padding-right:4px;">›</span>
+    </div>
 
     <!-- Message Stream -->
     <div class="messages-area" id="messagesArea">
@@ -1318,6 +1635,250 @@
   </div>
 </div>
 
+<!-- Daily Check-In & Mood Modal -->
+<div class="modal-overlay" id="checkinModal" style="display:none;">
+  <div class="modal-card">
+    <div class="modal-banner">
+      <div style="font-size:2.5rem;margin-bottom:4px;">🥰</div>
+      <h2>Daily Check-In</h2>
+      <p style="font-size:0.8rem;opacity:0.9;">How are you feeling right now?</p>
+    </div>
+    <div class="modal-body">
+      <!-- Partner's Today Mood Preview -->
+      <div class="partner-mood-box" id="partnerMoodContainer">
+        <div style="font-size:2rem;" id="partnerModalMoodEmoji">💭</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:0.75rem;font-weight:700;color:var(--accent);" id="partnerMoodLabel">Her Mood Today</div>
+          <div style="font-size:0.88rem;font-weight:700;color:#fff;margin-top:1px;" id="partnerMoodNote">"Thinking of you..."</div>
+          <div style="font-size:0.68rem;color:var(--text-sub);margin-top:2px;" id="partnerMoodTime">Waiting for today's check-in 💕</div>
+        </div>
+      </div>
+
+      <div>
+        <label style="font-size:0.8rem;font-weight:700;color:var(--text-sub);">Select Your Mood</label>
+        <div class="mood-grid" style="margin-top:6px;">
+          <div class="mood-chip selected" onclick="selectCheckinMood('🥰', 'In Love')">
+            <span class="mood-chip-emoji">🥰</span>
+            <span class="mood-chip-label">In Love</span>
+          </div>
+          <div class="mood-chip" onclick="selectCheckinMood('😊', 'Happy')">
+            <span class="mood-chip-emoji">😊</span>
+            <span class="mood-chip-label">Happy</span>
+          </div>
+          <div class="mood-chip" onclick="selectCheckinMood('🥺', 'Miss You')">
+            <span class="mood-chip-emoji">🥺</span>
+            <span class="mood-chip-label">Miss You</span>
+          </div>
+          <div class="mood-chip" onclick="selectCheckinMood('😴', 'Tired')">
+            <span class="mood-chip-emoji">😴</span>
+            <span class="mood-chip-label">Tired</span>
+          </div>
+          <div class="mood-chip" onclick="selectCheckinMood('☕', 'Relaxed')">
+            <span class="mood-chip-emoji">☕</span>
+            <span class="mood-chip-label">Relaxed</span>
+          </div>
+          <div class="mood-chip" onclick="selectCheckinMood('😤', 'Stressed')">
+            <span class="mood-chip-emoji">😤</span>
+            <span class="mood-chip-label">Stressed</span>
+          </div>
+          <div class="mood-chip" onclick="selectCheckinMood('🤒', 'Unwell')">
+            <span class="mood-chip-emoji">🤒</span>
+            <span class="mood-chip-label">Unwell</span>
+          </div>
+          <div class="mood-chip" onclick="selectCheckinMood('✨', 'Excited')">
+            <span class="mood-chip-emoji">✨</span>
+            <span class="mood-chip-label">Excited</span>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <label style="font-size:0.8rem;font-weight:700;color:var(--text-sub);">Add a Sweet Note (Optional)</label>
+        <input type="text" id="checkinNoteInput" class="input-field" placeholder="e.g. Can't stop smiling thinking of you..." style="margin-top:6px;">
+      </div>
+
+      <button class="btn-primary" onclick="submitCheckinForm()">Update My Mood 💕</button>
+      <button class="btn-sm" onclick="closeCheckinModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Relationship Timeline & Countdowns Modal -->
+<div class="modal-overlay" id="timelineModal" style="display:none;">
+  <div class="modal-card large">
+    <div class="modal-banner">
+      <div style="font-size:2.5rem;margin-bottom:4px;">⏳</div>
+      <h2>Our Relationship Timeline</h2>
+      <p style="font-size:0.8rem;opacity:0.9;">Meaningful dates & live shared countdowns</p>
+    </div>
+    <div class="modal-scrollable">
+      <!-- Top Counter Highlights -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div style="background:var(--bg-root);border:1px dashed var(--accent);border-radius:14px;padding:12px;text-align:center;">
+          <div style="font-size:1.6rem;font-weight:800;color:var(--accent);" id="timelineDaysNum">0</div>
+          <div style="font-size:0.72rem;color:var(--text-sub);font-weight:600;margin-top:2px;">Days Loving You 💕</div>
+        </div>
+        <div style="background:var(--bg-root);border:1px dashed var(--accent);border-radius:14px;padding:12px;text-align:center;">
+          <div style="font-size:1.6rem;font-weight:800;color:var(--accent);" id="timelineNextAnnivNum">0d</div>
+          <div style="font-size:0.72rem;color:var(--text-sub);font-weight:600;margin-top:2px;">Next Anniversary 💍</div>
+        </div>
+      </div>
+
+      <!-- Add Milestone Form (collapsible) -->
+      <div id="addTimelineForm" style="display:none;background:var(--bg-root);border:1px solid var(--border);border-radius:14px;padding:12px;gap:8px;flex-direction:column;">
+        <div style="font-size:0.8rem;font-weight:800;color:var(--text-sub);">ADD NEW MOMENT</div>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="newTimelineIcon" class="input-field" value="💖" style="width:50px;text-align:center;padding:10px;" maxlength="2">
+          <input type="text" id="newTimelineTitle" class="input-field" placeholder="Moment title (e.g. Our First Kiss)" style="flex:1;">
+        </div>
+        <input type="date" id="newTimelineDate" class="input-field">
+        <input type="text" id="newTimelineNotes" class="input-field" placeholder="Sweet memory note...">
+        <div style="display:flex;gap:8px;margin-top:4px;">
+          <button class="btn-primary" style="flex:1;min-height:40px;padding:8px;" onclick="saveNewTimelineEvent()">Save Moment ✨</button>
+          <button class="btn-sm" onclick="toggleAddTimelineForm(false)">Cancel</button>
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:0.8rem;font-weight:800;color:var(--text-sub);text-transform:uppercase;">Milestones</span>
+        <button class="btn-sm" onclick="toggleAddTimelineForm(true)" style="padding:4px 10px;font-size:0.75rem;">+ Add Milestone</button>
+      </div>
+
+      <!-- Milestones List -->
+      <div class="timeline-list" id="timelineListContainer">
+        <div style="text-align:center;color:var(--text-sub);font-size:0.8rem;padding:20px;">Loading timeline...</div>
+      </div>
+    </div>
+    <div style="padding:10px 16px;border-top:1px solid var(--border);background:var(--bg-card);">
+      <button class="btn-sm" style="width:100%;" onclick="closeTimelineModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Open-When Letters Modal -->
+<div class="modal-overlay" id="lettersModal" style="display:none;">
+  <div class="modal-card large">
+    <div class="modal-banner">
+      <div style="font-size:2.5rem;margin-bottom:4px;">💌</div>
+      <h2>Open-When Letters</h2>
+      <p style="font-size:0.8rem;opacity:0.9;">Digital sealed envelopes for when you need each other</p>
+    </div>
+    <div class="modal-scrollable">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:0.78rem;color:var(--text-sub);font-weight:600;">Sealed with love & wax</span>
+        <button class="btn-sm" onclick="openWriteLetterModal()" style="padding:6px 12px;font-size:0.75rem;background:var(--mine-bg);color:#fff;border-color:var(--accent);">+ Write a Letter ✍️</button>
+      </div>
+
+      <div class="letters-grid" id="lettersGridContainer">
+        <div style="text-align:center;color:var(--text-sub);font-size:0.8rem;padding:30px;grid-column:1/-1;">Loading letters...</div>
+      </div>
+    </div>
+    <div style="padding:10px 16px;border-top:1px solid var(--border);background:var(--bg-card);">
+      <button class="btn-sm" style="width:100%;" onclick="closeLettersModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Letter Reader & Unsealing Modal -->
+<div class="modal-overlay" id="letterViewerModal" style="display:none;">
+  <div class="modal-card" style="max-width:440px;">
+    <div class="modal-banner" style="background:linear-gradient(135deg, #b91c1c, #e11d48);">
+      <div style="font-size:2.8rem;margin-bottom:4px;" id="viewerWaxEmoji">✉️</div>
+      <h2 id="viewerLetterTitle" style="font-size:1.15rem;line-height:1.3;">Letter Title</h2>
+      <p style="font-size:0.78rem;opacity:0.88;margin-top:2px;" id="viewerLetterSender">From Your Love</p>
+    </div>
+    <div class="modal-body">
+      <div style="background:var(--bg-root);border:1px solid var(--border);border-radius:14px;padding:16px;font-size:0.92rem;line-height:1.6;color:var(--text-main);white-space:pre-wrap;max-height:280px;overflow-y:auto;" id="viewerLetterContent">
+        Letter body...
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-sub);text-align:center;" id="viewerLetterOpenedAt">
+        Opened on ...
+      </div>
+      <button class="btn-primary" onclick="closeLetterViewerModal()">Keep In My Heart 💕</button>
+    </div>
+  </div>
+</div>
+
+<!-- Write New Letter Modal -->
+<div class="modal-overlay" id="writeLetterModal" style="display:none;">
+  <div class="modal-card">
+    <div class="modal-banner">
+      <div style="font-size:2.5rem;margin-bottom:4px;">✍️</div>
+      <h2>Write an Open-When Letter</h2>
+      <p style="font-size:0.8rem;opacity:0.9;">Seal a romantic surprise for your partner</p>
+    </div>
+    <div class="modal-body">
+      <div>
+        <label style="font-size:0.8rem;font-weight:700;color:var(--text-sub);">Quick Letter Topics</label>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
+          <button class="btn-sm" type="button" style="padding:4px 8px;font-size:0.72rem;" onclick="setLetterTopic('Open when you miss me 💕')">Miss Me</button>
+          <button class="btn-sm" type="button" style="padding:4px 8px;font-size:0.72rem;" onclick="setLetterTopic('Open on your birthday 🎂')">Birthday</button>
+          <button class="btn-sm" type="button" style="padding:4px 8px;font-size:0.72rem;" onclick="setLetterTopic('Open when you can\'t sleep 🌙')">Can't Sleep</button>
+          <button class="btn-sm" type="button" style="padding:4px 8px;font-size:0.72rem;" onclick="setLetterTopic('Open when we have our first fight 🕊️')">First Fight</button>
+          <button class="btn-sm" type="button" style="padding:4px 8px;font-size:0.72rem;" onclick="setLetterTopic('Open when you need a tight hug 🤗')">Tight Hug</button>
+        </div>
+      </div>
+
+      <div>
+        <label style="font-size:0.8rem;font-weight:700;color:var(--text-sub);">Letter Title</label>
+        <input type="text" id="newLetterTitle" class="input-field" placeholder="e.g. Open when you miss me 💕" style="margin-top:6px;">
+      </div>
+
+      <div>
+        <label style="font-size:0.8rem;font-weight:700;color:var(--text-sub);">When to Open (Hint)</label>
+        <input type="text" id="newLetterHint" class="input-field" placeholder="e.g. For when we are miles apart..." style="margin-top:6px;">
+      </div>
+
+      <div>
+        <label style="font-size:0.8rem;font-weight:700;color:var(--text-sub);">Your Heartfelt Letter</label>
+        <textarea id="newLetterContent" class="input-field" rows="5" placeholder="Write everything you love about her..." style="margin-top:6px;resize:vertical;"></textarea>
+      </div>
+
+      <button class="btn-primary" onclick="submitNewLetter()">Seal With Love & Wax 💌</button>
+      <button class="btn-sm" onclick="closeWriteLetterModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Shared Memory Gallery Modal -->
+<div class="modal-overlay" id="memoriesModal" style="display:none;">
+  <div class="modal-card large">
+    <div class="modal-banner">
+      <div style="font-size:2.5rem;margin-bottom:4px;">📸</div>
+      <h2>Shared Memory Gallery</h2>
+      <p style="font-size:0.8rem;opacity:0.9;">All your live photos & voice notes saved forever</p>
+    </div>
+    <div class="modal-scrollable">
+      <!-- Tabs -->
+      <div class="memories-tabs">
+        <button class="mem-tab-btn active" id="memTabAll" onclick="filterMemories('all')">All Moments</button>
+        <button class="mem-tab-btn" id="memTabPhotos" onclick="filterMemories('photo')">Live Photos 📸</button>
+        <button class="mem-tab-btn" id="memTabAudio" onclick="filterMemories('audio')">Voice Notes 🎙️</button>
+      </div>
+
+      <!-- Memories Grid -->
+      <div id="memoriesContentContainer">
+        <div style="text-align:center;color:var(--text-sub);font-size:0.8rem;padding:30px;">Loading memories...</div>
+      </div>
+    </div>
+    <div style="padding:10px 16px;border-top:1px solid var(--border);background:var(--bg-card);">
+      <button class="btn-sm" style="width:100%;" onclick="closeMemoriesModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Memory Photo Lightbox -->
+<div class="modal-overlay" id="memoryLightboxModal" style="display:none;background:rgba(0,0,0,0.95);" onclick="closeMemoryLightbox()">
+  <div style="position:relative;max-width:92vw;max-height:85vh;display:flex;flex-direction:column;align-items:center;" onclick="event.stopPropagation();">
+    <img id="lightboxImg" style="max-width:100%;max-height:75vh;border-radius:14px;box-shadow:0 0 30px rgba(0,0,0,0.8);pointer-events:none;" src="" alt="Memory">
+    <div style="margin-top:10px;text-align:center;color:#fff;">
+      <div id="lightboxCaption" style="font-size:0.88rem;font-weight:700;">Captured Live Moment</div>
+      <div id="lightboxTime" style="font-size:0.75rem;color:var(--text-sub);margin-top:2px;">Time</div>
+    </div>
+    <button class="btn-sm" onclick="closeMemoryLightbox()" style="margin-top:12px;background:rgba(255,255,255,0.15);color:#fff;border:none;padding:6px 18px;">✕ Close</button>
+  </div>
+</div>
+
 <!-- Login / Entry Modal -->
 <div class="modal-overlay" id="loginOverlay">
   <div class="modal-card">
@@ -1368,6 +1929,7 @@
   const PRIVATE_PIN = "1012";
   let currentUser = "";
   let currentAvatar = "🐻";
+  let sessionToken = localStorage.getItem("couple_token") || "";
   let ws = null;
   let heartbeatTimer = null;
   let reconnectTimer = null;
@@ -1375,6 +1937,21 @@
   let lastSeenId = null;
   const renderedIds = new Set();
   let soundEnabled = true;
+
+  // Outgoing queue for offline message delivery & recovery
+  const outgoingQueue = [];
+
+  // Couple modules state
+  let selectedCheckinMood = "🥰";
+  let partnerTodayCheckin = null;
+  let cachedTimeline = [];
+  let cachedLetters = [];
+  let cachedMemories = [];
+  let activeMemoriesFilter = "all";
+
+  function getAuthHeaders() {
+    return sessionToken ? { "Authorization": `Bearer ${sessionToken}` } : {};
+  }
 
   // Typing debounce
   let typingTimer = null;
@@ -1608,6 +2185,10 @@
 
       if (res.ok) {
         currentUser = data.username;
+        if (data.token) {
+          sessionToken = data.token;
+          localStorage.setItem("couple_token", sessionToken);
+        }
         if (document.getElementById("rememberMeCheck").checked) {
           localStorage.setItem("couple_user", currentUser);
           localStorage.setItem("couple_pin", PRIVATE_PIN);
@@ -1638,6 +2219,9 @@
     loadHistory();
     loadUsers();
     loadSettings();
+    loadCheckin();
+    loadTimeline();
+    loadLetters();
   }
 
   function leaveChat() {
@@ -1646,6 +2230,8 @@
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     localStorage.removeItem("couple_user");
     localStorage.removeItem("couple_pin");
+    localStorage.removeItem("couple_token");
+    sessionToken = "";
     currentUser = "";
     document.getElementById("loginOverlay").style.display = "flex";
     setConn(false);
@@ -1657,10 +2243,12 @@
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
 
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    ws = new WebSocket(`${proto}//${location.host}/ws/${encodeURIComponent(currentUser)}`);
+    const tokParam = sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : "";
+    ws = new WebSocket(`${proto}//${location.host}/ws/${encodeURIComponent(currentUser)}${tokParam}`);
 
     ws.onopen = () => {
       setConn(true);
+      flushOutgoingQueue();
       loadHistory();
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       heartbeatTimer = setInterval(() => {
@@ -1672,6 +2260,12 @@
       try {
         const msg = JSON.parse(e.data);
         if (msg.type === "pong") return;
+        if (msg.type === "msg_status") { handleMsgStatus(msg.msg_id, msg.status); return; }
+        if (msg.type === "partner_online") { markOurSentAsDelivered(); return; }
+        if (msg.type === "checkin_update") { handleCheckinUpdate(msg.checkin); return; }
+        if (msg.type === "timeline_update" || msg.type === "timeline_delete") { loadTimeline(); return; }
+        if (msg.type === "letter_new") { loadLetters(); showLetterToast(msg.letter); return; }
+        if (msg.type === "letter_opened") { loadLetters(); return; }
         if (msg.type === "users_update") { renderUsers(msg.users || []); return; }
         if (msg.type === "settings_update") { updateSettingsUI(msg.settings || {}); return; }
         if (msg.type === "theme_update") {
@@ -1689,6 +2283,7 @@
 
         appendMsg(msg);
         if (msg.sender && msg.sender.toLowerCase() !== currentUser.toLowerCase()) {
+          sendAck(msg.id, "delivered");
           playMessageChime();
         }
       } catch(err) { console.error(err); }
@@ -2088,21 +2683,13 @@
       type: "audio",
       timestamp: formatTime(nowMs),
       time_ms: nowMs,
+      status: "pending",
       reactions: {}
     };
 
-    // Optimistically render immediately without waiting for server or reload!
+    // Optimistically render message with 🕒 (pending)
     appendMsg(payload);
-
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(payload));
-    } else {
-      fetch("/api/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-    }
+    queueAndSend(payload);
   }
 
   // ── Date Dividers & Chronological Helpers ────
@@ -2168,7 +2755,11 @@
     if (!msg) return;
     const msgId = msg.id || msg.msg_id;
     if (msgId) {
-      if (renderedIds.has(msgId)) return;
+      if (renderedIds.has(msgId)) {
+        if (msg.status) handleMsgStatus(msgId, msg.status);
+        if (msg.reactions) updateReactionsDOM(msgId, msg.reactions);
+        return;
+      }
       renderedIds.add(msgId);
       msg.id = msgId;
     }
@@ -2246,6 +2837,7 @@
           <div class="msg-meta">
             <span class="msg-sender">${escHtml(msg.sender || "Unknown")}</span>
             <span class="msg-time">${formatTime(timeMs)}</span>
+            ${isMine ? `<span class="msg-status status-${msg.status || 'sent'}" id="status_${msg.id}" title="${msg.status === 'delivered' ? 'Delivered to her' : (msg.status === 'seen' ? 'Read by her' : (msg.status === 'pending' ? 'Sending...' : 'Sent to server'))}">${getStatusIcon(msg.status || 'sent')}</span>` : ''}
           </div>
           <div class="msg-bubble-wrap">
             <div class="msg-actions" id="actions_${msg.id}">
@@ -2400,7 +2992,7 @@
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "delete_message", msg_id: msgId }));
     } else {
-      fetch(`/api/messages/${msgId}`, { method: "DELETE" });
+      fetch(`/api/messages/${encodeURIComponent(msgId)}`, { method: "DELETE", headers: getAuthHeaders() });
     }
   }
 
@@ -2431,10 +3023,11 @@
       type: stagedPhoto ? "image" : "chat",
       timestamp: formatTime(nowMs),
       time_ms: nowMs,
+      status: "pending",
       reactions: {}
     };
 
-    // 1. Optimistically render message immediately on screen (0 ms latency, no reload needed!)
+    // 1. Optimistically render message immediately on screen with 🕒
     appendMsg(payload);
 
     input.value = "";
@@ -2442,17 +3035,38 @@
     input.style.height = base + "px";
     clearStaging();
 
-    // 2. Deliver via WebSocket or fallback to HTTP REST
+    // 2. Deliver via Queue & Send
+    queueAndSend(payload);
+  }
+
+  function queueAndSend(payload) {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(payload));
+      handleMsgStatus(payload.id, "sent");
     } else {
-      try {
-        await fetch("/api/send", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-      } catch(e) { console.error("HTTP send fallback error:", e); }
+      outgoingQueue.push(payload);
+      fetch("/api/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify(payload)
+      }).then(res => {
+        if (res.ok) {
+          const idx = outgoingQueue.findIndex(x => x.id === payload.id);
+          if (idx >= 0) outgoingQueue.splice(idx, 1);
+          handleMsgStatus(payload.id, "sent");
+        }
+      }).catch(err => {
+        console.warn("Will retry sending message on reconnect", err);
+      });
+    }
+  }
+
+  function flushOutgoingQueue() {
+    if (!outgoingQueue.length || !ws || ws.readyState !== WebSocket.OPEN) return;
+    while (outgoingQueue.length > 0) {
+      const item = outgoingQueue.shift();
+      ws.send(JSON.stringify(item));
+      handleMsgStatus(item.id, "sent");
     }
   }
 
@@ -2461,7 +3075,7 @@
     try {
       let url = `/api/messages?username=${encodeURIComponent(currentUser)}`;
       if (lastSeenId) url += `&since_id=${encodeURIComponent(lastSeenId)}`;
-      const res = await fetch(url);
+      const res = await fetch(url, { headers: getAuthHeaders() });
       if (res.ok) {
         const d = await res.json();
         const msgs = (d.messages || []).slice();
@@ -2718,11 +3332,489 @@
   async function clearChat() {
     if (!confirm("Clear all conversation history? This cannot be undone.")) return;
     try {
-      await fetch("/api/messages", { method: "DELETE" });
+      await fetch("/api/messages", { method: "DELETE", headers: getAuthHeaders() });
       document.getElementById("messagesArea").innerHTML = `<div class="msg-system">🗑️ Chat history cleared.</div>`;
       renderedIds.clear();
       lastSeenId = null;
     } catch(e) { console.error(e); }
+  }
+
+  // ── Delivery Acknowledgments & Status Helpers ──
+  function getStatusIcon(status) {
+    if (status === "pending") return "🕒";
+    if (status === "delivered") return "✓✓";
+    if (status === "seen") return "✓✓";
+    return "✓"; // default "sent"
+  }
+
+  function handleMsgStatus(msgId, status) {
+    const el = document.getElementById("status_" + msgId);
+    if (el) {
+      el.className = `msg-status status-${status}`;
+      el.textContent = getStatusIcon(status);
+      if (status === "delivered") el.title = "Delivered to her 💕";
+      else if (status === "seen") el.title = "Read by her 💕";
+      else if (status === "pending") el.title = "Sending...";
+      else el.title = "Sent to server";
+    }
+  }
+
+  function sendAck(msgId, status = "delivered") {
+    if (!msgId) return;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "ack", msg_id: msgId, status }));
+    } else {
+      fetch("/api/ack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ msg_id: msgId, status })
+      }).catch(() => {});
+    }
+  }
+
+  function markOurSentAsDelivered() {
+    document.querySelectorAll(".msg-row.mine .msg-status.status-sent").forEach(el => {
+      el.className = "msg-status status-delivered";
+      el.textContent = "✓✓";
+      el.title = "Delivered to her 💕";
+    });
+  }
+
+  // ── 1. Daily Check-In & Mood ──────────────────
+  function selectCheckinMood(emoji, label) {
+    selectedCheckinMood = emoji;
+    document.querySelectorAll(".mood-chip").forEach(el => {
+      const isThis = el.querySelector(".mood-chip-emoji")?.textContent.trim() === emoji;
+      el.classList.toggle("selected", isThis);
+    });
+  }
+
+  function openCheckInModal() {
+    document.getElementById("checkinModal").style.display = "flex";
+    loadCheckin();
+  }
+
+  function closeCheckinModal() {
+    document.getElementById("checkinModal").style.display = "none";
+  }
+
+  async function loadCheckin() {
+    try {
+      const res = await fetch("/api/checkin", { headers: getAuthHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        const checkins = data.checkins || {};
+        updateCheckinUI(checkins);
+      }
+    } catch(e) { console.error("Error loading checkins:", e); }
+  }
+
+  function updateCheckinUI(checkins) {
+    const myLower = (currentUser || "").toLowerCase();
+    let partnerDoc = null;
+    let myDoc = null;
+
+    for (const [userKey, doc] of Object.entries(checkins)) {
+      if (userKey === myLower) myDoc = doc;
+      else partnerDoc = doc;
+    }
+
+    if (partnerDoc) {
+      partnerTodayCheckin = partnerDoc;
+      document.getElementById("bannerPartnerMood").textContent = partnerDoc.mood || "🥰";
+      document.getElementById("bannerCheckinTitle").textContent = `${partnerDoc.username}: ${partnerDoc.mood} ${partnerDoc.note ? `"${partnerDoc.note}"` : ""}`;
+      document.getElementById("bannerCheckinSub").textContent = `Updated today at ${formatTime(partnerDoc.updated_at || Date.now())} 💕`;
+
+      document.getElementById("partnerModalMoodEmoji").textContent = partnerDoc.mood || "🥰";
+      document.getElementById("partnerMoodLabel").textContent = `${partnerDoc.username}'s Mood Today 💕`;
+      document.getElementById("partnerMoodNote").textContent = partnerDoc.note ? `"${partnerDoc.note}"` : "Feeling loved today 💕";
+      document.getElementById("partnerMoodTime").textContent = `Updated at ${formatTime(partnerDoc.updated_at || Date.now())}`;
+    } else {
+      document.getElementById("bannerPartnerMood").textContent = "💭";
+      document.getElementById("bannerCheckinTitle").textContent = "Daily Check-In: How was your day?";
+      document.getElementById("bannerCheckinSub").textContent = "Tap to share your mood & see hers 💕";
+
+      document.getElementById("partnerModalMoodEmoji").textContent = "💭";
+      document.getElementById("partnerMoodLabel").textContent = "Her Mood Today 💕";
+      document.getElementById("partnerMoodNote").textContent = "Hasn't checked in yet today 💕";
+      document.getElementById("partnerMoodTime").textContent = "Tap below to update your mood first!";
+    }
+
+    if (myDoc && myDoc.mood) {
+      selectCheckinMood(myDoc.mood);
+      if (myDoc.note) document.getElementById("checkinNoteInput").value = myDoc.note;
+    }
+  }
+
+  async function submitCheckinForm() {
+    const note = document.getElementById("checkinNoteInput").value.trim();
+    try {
+      const res = await fetch("/api/checkin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ mood: selectedCheckinMood, note })
+      });
+      if (res.ok) {
+        burstHearts(22);
+        closeCheckinModal();
+        loadCheckin();
+      }
+    } catch(e) { alert("Checkin error: " + e.message); }
+  }
+
+  function handleCheckinUpdate(checkin) {
+    if (!checkin) return;
+    loadCheckin();
+    if (checkin.username && checkin.username.toLowerCase() !== (currentUser || "").toLowerCase()) {
+      burstHearts(16);
+      showCustomToast(`${checkin.username} checked in: ${checkin.mood} ${checkin.note ? `"${checkin.note}"` : ""}`);
+    }
+  }
+
+  // ── 2. Relationship Timeline & Countdowns ──────
+  function openTimelineModal() {
+    document.getElementById("timelineModal").style.display = "flex";
+    loadTimeline();
+  }
+
+  function closeTimelineModal() {
+    document.getElementById("timelineModal").style.display = "none";
+  }
+
+  function toggleAddTimelineForm(show) {
+    const f = document.getElementById("addTimelineForm");
+    f.style.display = show ? "flex" : "none";
+    if (show) {
+      document.getElementById("newTimelineDate").value = new Date().toISOString().split("T")[0];
+    }
+  }
+
+  async function loadTimeline() {
+    try {
+      const res = await fetch("/api/timeline", { headers: getAuthHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        cachedTimeline = data.timeline || [];
+        renderTimeline(cachedTimeline);
+      }
+    } catch(e) { console.error("Error loading timeline:", e); }
+  }
+
+  function renderTimeline(items) {
+    const container = document.getElementById("timelineListContainer");
+    if (!items || !items.length) {
+      container.innerHTML = `<div style="text-align:center;color:var(--text-sub);font-size:0.8rem;padding:20px;">No milestones yet. Tap "+ Add Milestone" to add your first special date!</div>`;
+      return;
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Update highlight counters
+    if (serverSettings.anniversary_date) {
+      const annivDate = new Date(serverSettings.anniversary_date);
+      const diffDays = Math.floor(Math.abs(today - annivDate) / (1000 * 60 * 60 * 24));
+      document.getElementById("timelineDaysNum").textContent = diffDays;
+
+      // Next anniversary countdown
+      let nextAnniv = new Date(today.getFullYear(), annivDate.getMonth(), annivDate.getDate());
+      if (nextAnniv < today) {
+        nextAnniv.setFullYear(today.getFullYear() + 1);
+      }
+      const daysUntilNext = Math.ceil((nextAnniv - today) / (1000 * 60 * 60 * 24));
+      document.getElementById("timelineNextAnnivNum").textContent = `${daysUntilNext}d`;
+    }
+
+    container.innerHTML = "";
+    items.forEach(it => {
+      const itemDate = new Date(it.date);
+      itemDate.setHours(0, 0, 0, 0);
+      const diffMs = itemDate - today;
+      const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+      let badgeText = "";
+      if (diffDays === 0) badgeText = "Today! 🎉";
+      else if (diffDays > 0) badgeText = `In ${diffDays} day${diffDays === 1 ? '' : 's'} ✨`;
+      else badgeText = `${Math.abs(diffDays)} days ago 💕`;
+
+      const card = document.createElement("div");
+      card.className = "timeline-card";
+      card.innerHTML = `
+        <div class="timeline-card-left">
+          <div class="timeline-icon">${escHtml(it.icon || "💍")}</div>
+          <div style="min-width:0;">
+            <div class="timeline-title">${escHtml(it.title)}</div>
+            <div class="timeline-date">${escHtml(it.date)} ${it.notes ? `• <em>${escHtml(it.notes)}</em>` : ''}</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="timeline-badge">${badgeText}</span>
+          ${it.id && !it.id.startsWith("t_") ? `<button class="action-mini-btn" onclick="deleteTimelineEvent('${it.id}')" title="Delete">🗑️</button>` : ''}
+        </div>
+      `;
+      container.appendChild(card);
+    });
+  }
+
+  async function saveNewTimelineEvent() {
+    const icon = document.getElementById("newTimelineIcon").value.trim() || "💖";
+    const title = document.getElementById("newTimelineTitle").value.trim();
+    const date = document.getElementById("newTimelineDate").value;
+    const notes = document.getElementById("newTimelineNotes").value.trim();
+
+    if (!title || !date) return alert("Please enter both title and date!");
+
+    try {
+      const res = await fetch("/api/timeline", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ icon, title, date, notes })
+      });
+      if (res.ok) {
+        burstHearts(16);
+        toggleAddTimelineForm(false);
+        document.getElementById("newTimelineTitle").value = "";
+        document.getElementById("newTimelineNotes").value = "";
+        loadTimeline();
+      }
+    } catch(e) { alert("Error saving milestone: " + e.message); }
+  }
+
+  async function deleteTimelineEvent(id) {
+    if (!confirm("Remove this milestone?")) return;
+    try {
+      const res = await fetch(`/api/timeline/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: getAuthHeaders()
+      });
+      if (res.ok) loadTimeline();
+    } catch(e) {}
+  }
+
+  // ── 3. Open-When Letters ──────────────────────
+  function openLettersModal() {
+    document.getElementById("lettersModal").style.display = "flex";
+    loadLetters();
+  }
+
+  function closeLettersModal() {
+    document.getElementById("lettersModal").style.display = "none";
+  }
+
+  function openWriteLetterModal() {
+    document.getElementById("writeLetterModal").style.display = "flex";
+  }
+
+  function closeWriteLetterModal() {
+    document.getElementById("writeLetterModal").style.display = "none";
+  }
+
+  function setLetterTopic(topic) {
+    document.getElementById("newLetterTitle").value = topic;
+  }
+
+  async function loadLetters() {
+    try {
+      const res = await fetch("/api/letters", { headers: getAuthHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        cachedLetters = data.letters || [];
+        renderLetters(cachedLetters);
+      }
+    } catch(e) { console.error("Error loading letters:", e); }
+  }
+
+  function renderLetters(letters) {
+    const container = document.getElementById("lettersGridContainer");
+    if (!letters || !letters.length) {
+      container.innerHTML = `
+        <div style="text-align:center;color:var(--text-sub);font-size:0.82rem;padding:30px;grid-column:1/-1;">
+          No sealed letters yet! Be the first to surprise your partner by tapping "+ Write a Letter ✍️" 💕
+        </div>`;
+      return;
+    }
+
+    container.innerHTML = "";
+    letters.forEach(letDoc => {
+      const isSealed = letDoc.is_sealed !== false;
+      const card = document.createElement("div");
+      card.className = `letter-envelope-card ${isSealed ? 'sealed' : 'opened'}`;
+      card.onclick = () => viewOrOpenLetter(letDoc);
+
+      card.innerHTML = `
+        <div class="letter-wax-seal">${isSealed ? '💌' : '📜'}</div>
+        <div class="letter-card-title">${escHtml(letDoc.title)}</div>
+        <div class="letter-card-sub">${isSealed ? (escHtml(letDoc.open_hint || 'Sealed with love 🔒')) : `Opened • Read now ✨`}</div>
+        <div style="font-size:0.68rem;color:var(--text-sub);margin-top:6px;">From: ${escHtml(letDoc.sender || 'Your Love')}</div>
+      `;
+      container.appendChild(card);
+    });
+  }
+
+  async function viewOrOpenLetter(letDoc) {
+    if (letDoc.is_sealed !== false) {
+      if (!confirm(`Are you ready to break the wax seal and open: "${letDoc.title}"? 💕`)) {
+        return;
+      }
+      burstHearts(35);
+      playLoveNudgeChime();
+      try {
+        const res = await fetch(`/api/letters/${encodeURIComponent(letDoc.id)}/open`, {
+          method: "POST",
+          headers: getAuthHeaders()
+        });
+        if (res.ok) {
+          const d = await res.json();
+          letDoc = d.letter || letDoc;
+          loadLetters();
+        }
+      } catch(e) {}
+    }
+
+    document.getElementById("viewerWaxEmoji").textContent = "📜";
+    document.getElementById("viewerLetterTitle").textContent = letDoc.title;
+    document.getElementById("viewerLetterSender").textContent = `Written with pure love by ${letDoc.sender || 'Your Partner'} 💕`;
+    document.getElementById("viewerLetterContent").textContent = letDoc.content;
+    document.getElementById("viewerLetterOpenedAt").textContent = letDoc.opened_at ? `Opened on ${new Date(letDoc.opened_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} at ${formatTime(letDoc.opened_at)}` : "Opened with love 💕";
+
+    document.getElementById("letterViewerModal").style.display = "flex";
+  }
+
+  function closeLetterViewerModal() {
+    document.getElementById("letterViewerModal").style.display = "none";
+  }
+
+  async function submitNewLetter() {
+    const title = document.getElementById("newLetterTitle").value.trim();
+    const hint = document.getElementById("newLetterHint").value.trim();
+    const content = document.getElementById("newLetterContent").value.trim();
+
+    if (!title || !content) return alert("Please provide both a title and your letter message!");
+
+    try {
+      const res = await fetch("/api/letters", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ title, content, open_hint: hint })
+      });
+      if (res.ok) {
+        burstHearts(25);
+        closeWriteLetterModal();
+        document.getElementById("newLetterTitle").value = "";
+        document.getElementById("newLetterHint").value = "";
+        document.getElementById("newLetterContent").value = "";
+        loadLetters();
+        alert("Your letter has been sealed with wax and stored in your shared space! 💌");
+      }
+    } catch(e) { alert("Error saving letter: " + e.message); }
+  }
+
+  function showLetterToast(letter) {
+    burstHearts(20);
+    showCustomToast(`💌 New Letter Sealed: "${letter.title}" from ${letter.sender}!`);
+  }
+
+  // ── 4. Shared Memories Gallery ────────────────
+  function openMemoriesModal() {
+    document.getElementById("memoriesModal").style.display = "flex";
+    loadMemories();
+  }
+
+  function closeMemoriesModal() {
+    document.getElementById("memoriesModal").style.display = "none";
+  }
+
+  function filterMemories(filter) {
+    activeMemoriesFilter = filter;
+    document.getElementById("memTabAll").classList.toggle("active", filter === "all");
+    document.getElementById("memTabPhotos").classList.toggle("active", filter === "photo");
+    document.getElementById("memTabAudio").classList.toggle("active", filter === "audio");
+    renderMemories(cachedMemories);
+  }
+
+  async function loadMemories() {
+    try {
+      const res = await fetch("/api/memories", { headers: getAuthHeaders() });
+      if (res.ok) {
+        const d = await res.json();
+        cachedMemories = d.memories || [];
+        renderMemories(cachedMemories);
+      }
+    } catch(e) { console.error("Error loading memories:", e); }
+  }
+
+  function renderMemories(items) {
+    const container = document.getElementById("memoriesContentContainer");
+    if (!items || !items.length) {
+      container.innerHTML = `<div style="text-align:center;color:var(--text-sub);font-size:0.82rem;padding:30px;">No captured moments yet. Send live camera photos and voice notes to build your memory book! 📸</div>`;
+      return;
+    }
+
+    let filtered = items;
+    if (activeMemoriesFilter === "photo") filtered = items.filter(x => x.type === "photo");
+    else if (activeMemoriesFilter === "audio") filtered = items.filter(x => x.type === "audio");
+
+    if (!filtered.length) {
+      container.innerHTML = `<div style="text-align:center;color:var(--text-sub);font-size:0.82rem;padding:30px;">No moments match this filter 💕</div>`;
+      return;
+    }
+
+    container.innerHTML = "";
+    const grid = document.createElement("div");
+    grid.className = activeMemoriesFilter === "photo" ? "memories-grid" : "timeline-list";
+
+    filtered.forEach(m => {
+      const timeMs = Number(m.time_ms) || Date.now();
+      const dateStr = formatDateLabel(timeMs);
+      const timeStr = formatTime(timeMs);
+
+      if (m.type === "photo") {
+        const card = document.createElement("div");
+        card.className = "memory-thumb-card";
+        card.onclick = () => openMemoryLightbox(m.src, m.sender, `${dateStr} at ${timeStr}`);
+        card.innerHTML = `
+          <img src="${m.src}" alt="Memory" loading="lazy">
+          <div class="memory-thumb-badge">
+            <span>${escHtml(m.sender || "Love")}</span>
+            <span>${timeStr}</span>
+          </div>
+        `;
+        grid.appendChild(card);
+      } else if (m.type === "audio") {
+        const card = document.createElement("div");
+        card.className = "memory-audio-card";
+        card.innerHTML = `
+          <div style="font-size:1.8rem;width:40px;height:40px;display:flex;align-items:center;justify-content:center;background:var(--accent-dim);border-radius:50%;border:1px solid var(--accent);flex-shrink:0;">🎙️</div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:0.84rem;font-weight:700;color:#fff;">Voice Note from ${escHtml(m.sender || "Partner")}</div>
+            <div style="font-size:0.72rem;color:var(--text-sub);margin-top:2px;">${dateStr} at ${timeStr} • ${m.duration ? m.duration + 's' : ''}</div>
+            <audio controls src="${m.src}" style="width:100%;height:32px;margin-top:6px;"></audio>
+          </div>
+        `;
+        grid.appendChild(card);
+      }
+    });
+
+    container.appendChild(grid);
+  }
+
+  function openMemoryLightbox(src, sender, timeInfo) {
+    document.getElementById("lightboxImg").src = src;
+    document.getElementById("lightboxCaption").textContent = `Captured live by ${sender || 'Partner'} 💕`;
+    document.getElementById("lightboxTime").textContent = timeInfo;
+    document.getElementById("memoryLightboxModal").style.display = "flex";
+  }
+
+  function closeMemoryLightbox() {
+    document.getElementById("memoryLightboxModal").style.display = "none";
+  }
+
+  function showCustomToast(text) {
+    const toast = document.getElementById("nudgeToast");
+    if (!toast) return;
+    document.getElementById("nudgeText").textContent = text;
+    toast.classList.add("active");
+    setTimeout(() => toast.classList.remove("active"), 4000);
   }
 
   // ── Helpers ───────────────────────────────────

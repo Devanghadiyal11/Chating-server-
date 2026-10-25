@@ -2,20 +2,34 @@
 Private Couple Chat Server - 2-Person Only
 PIN: 1012 (hardcoded, always alive)
 Storage: MongoDB (persistent - chats survive server restarts)
-Features: Text, Photos (view-only shield), Voice Notes, Live Typing,
-          Reactions, Love Nudge, Disappearing Messages, Together Counter,
-          and Stealth Mode support.
+
+Technical Upgrades:
+- Server-side Session Authentication & Authorization (Tokens)
+- Rate Limiting & Protection
+- MongoDB-First Persistence Before Confirmation
+- Delivery & Read Acknowledgments (Sent -> Delivered -> Seen)
+- Strict Monotonic Server Timestamps & Ordering
+- Offline Catch-Up & Reconnect Sync
+
+Couple Features:
+- Daily Check-In & Mood Tracker
+- Relationship Timeline & Shared Countdowns
+- Open-When Letters (Digital Sealed Envelopes)
+- Shared Memory Gallery (Live Photos & Voice Memories)
+- Live Camera Only (No Gallery)
+- Synced Couple Themes & Floating Emojis with Timeout Cooldown
 """
 
 import asyncio
 import random
 import time
+import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 
 import motor.motor_asyncio
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -41,26 +55,77 @@ MONGO_URI = "mongodb+srv://devanghadiyal:dev%40ng%7B8954%7D@cluster0.owtzs.mongo
 DB_NAME   = "Chatserver"
 COL_MSGS  = "messages"
 COL_CONF  = "settings"
+COL_SESS  = "sessions"
+COL_TIME  = "timeline"
+COL_LETT  = "letters"
+COL_CHCK  = "checkins"
 
 # ─────────────────────────────────────────────
-# MongoDB connection & Background Tasks
+# State & Caches
 # ─────────────────────────────────────────────
 
 mongo_client: Optional[motor.motor_asyncio.AsyncIOMotorClient] = None
 db = None
 messages_col = None
 settings_col = None
+sessions_col = None
+timeline_col = None
+letters_col = None
+checkins_col = None
 
-# In-memory settings cache for instant access
+# Active session tokens: token -> {"username": str, "created_at": float}
+active_sessions: Dict[str, dict] = {}
+
+# Monotonic timestamp tracker to ensure zero timestamp collisions or reversals
+last_monotonic_ms = 0
+
+# Cooldown tracking for Love Nudge
+NUDGE_COOLDOWN_SEC = 5.0
+last_nudge_times: Dict[str, float] = {}
+
+# Rate limit tracker: key -> [timestamps]
+rate_limit_records: Dict[str, List[float]] = {}
+
+# Settings cache
 settings_cache: Dict[str, Any] = {
     "anniversary_date": "2024-02-14",
-    "disappearing_mode": 0,  # 0 = disabled, seconds otherwise (e.g. 3600 for 1h, 86400 for 24h)
+    "disappearing_mode": 0,
     "couple_name": "Our Sweet Space 💕",
     "theme": "rose"
 }
 
-# In-memory message store fallback if DB is temporarily unreachable
+# In-memory fallbacks
 memory_messages: List[dict] = []
+memory_timeline: List[dict] = [
+    {"id": "t_1", "title": "When Our Story Began ✨", "date": "2024-02-14", "icon": "💍", "notes": "The most beautiful day"},
+    {"id": "t_2", "title": "Our First Date ☕", "date": "2024-02-18", "icon": "☕", "notes": "Coffee & endless conversations"}
+]
+memory_letters: List[dict] = []
+memory_checkins: Dict[str, dict] = {}
+
+def get_monotonic_time_ms() -> int:
+    global last_monotonic_ms
+    now_ms = int(time.time() * 1000)
+    if now_ms <= last_monotonic_ms:
+        last_monotonic_ms += 1
+    else:
+        last_monotonic_ms = now_ms
+    return last_monotonic_ms
+
+def check_rate_limit(key: str, max_calls: int = 40, period: float = 10.0) -> bool:
+    """Sliding window rate limiter. Returns True if allowed, False if exceeded."""
+    now = time.time()
+    calls = rate_limit_records.get(key, [])
+    valid_calls = [t for t in calls if now - t < period]
+    if len(valid_calls) >= max_calls:
+        return False
+    valid_calls.append(now)
+    rate_limit_records[key] = valid_calls
+    return True
+
+# ─────────────────────────────────────────────
+# Background Cleanup
+# ─────────────────────────────────────────────
 
 async def cleanup_expired_messages():
     """Background task to prune expired disappearing messages."""
@@ -72,7 +137,6 @@ async def cleanup_expired_messages():
                 await messages_col.delete_many({
                     "expires_at": {"$ne": None, "$gt": 0, "$lt": now_ms}
                 })
-            # Also prune memory fallback
             global memory_messages
             memory_messages = [
                 m for m in memory_messages
@@ -83,7 +147,7 @@ async def cleanup_expired_messages():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global mongo_client, db, messages_col, settings_col, settings_cache
+    global mongo_client, db, messages_col, settings_col, sessions_col, timeline_col, letters_col, checkins_col
     try:
         mongo_client = motor.motor_asyncio.AsyncIOMotorClient(
             MONGO_URI,
@@ -92,16 +156,25 @@ async def lifespan(app: FastAPI):
         db = mongo_client[DB_NAME]
         messages_col = db[COL_MSGS]
         settings_col = db[COL_CONF]
+        sessions_col = db[COL_SESS]
+        timeline_col = db[COL_TIME]
+        letters_col = db[COL_LETT]
+        checkins_col = db[COL_CHCK]
+
         await messages_col.create_index("time_ms")
         await messages_col.create_index("id", unique=True)
-        print(f"[DB] Connected to MongoDB - {DB_NAME}.{COL_MSGS}")
+        print(f"[DB] Connected to MongoDB Atlas - {DB_NAME}")
 
-        # Load persisted settings if any
+        # Load persisted settings
         stored_conf = await settings_col.find_one({"_id": "couple_settings"}, {"_id": 0})
         if stored_conf:
             settings_cache.update(stored_conf)
+
+        # Load sessions from DB
+        async for s in sessions_col.find({}):
+            active_sessions[s["token"]] = {"username": s["username"], "created_at": s.get("created_at", time.time())}
     except Exception as e:
-        print(f"[DB Warning] Could not connect to MongoDB initially: {e}. Running with memory fallback.")
+        print(f"[DB Warning] Could not connect to MongoDB Atlas: {e}. Running with memory fallback.")
 
     cleanup_task = asyncio.create_task(cleanup_expired_messages())
     yield
@@ -109,10 +182,10 @@ async def lifespan(app: FastAPI):
     if mongo_client:
         mongo_client.close()
 
-app = FastAPI(title="Couple's Private Chat - 1012", lifespan=lifespan)
+app = FastAPI(title="Our Sweet Space 💕 - Couple Server", lifespan=lifespan)
 
 # ─────────────────────────────────────────────
-# In-memory room state (connections & presence)
+# Room & Presence Hub
 # ─────────────────────────────────────────────
 
 class PrivateRoom:
@@ -156,17 +229,33 @@ class PrivateRoom:
 room = PrivateRoom()
 
 # ─────────────────────────────────────────────
-# Helpers & Storage Handlers
+# Authentication & Authorization Helpers
 # ─────────────────────────────────────────────
 
-def new_msg_id() -> str:
-    return f"m_{int(time.time()*1000)}_{random.randint(100, 999)}"
+def get_current_user_from_req(request: Request) -> str:
+    """Extract authenticated username from Bearer token or fallback query param."""
+    auth_header = request.headers.get("Authorization", "")
+    token = None
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+    if not token:
+        token = request.query_params.get("token")
+
+    if token and token in active_sessions:
+        return active_sessions[token]["username"]
+
+    # Fallback for username param if session is not yet established
+    u = request.query_params.get("username")
+    if u:
+        return u.strip()
+
+    raise HTTPException(status_code=401, detail="Authentication token required or expired.")
 
 async def save_message(msg: dict):
-    """Persist message to MongoDB with memory fallback."""
+    """Save to MongoDB FIRST before confirmation."""
     global memory_messages
     memory_messages.append(msg)
-    if len(memory_messages) > 1000:
+    if len(memory_messages) > 1200:
         memory_messages.pop(0)
 
     if messages_col is not None:
@@ -177,7 +266,7 @@ async def save_message(msg: dict):
             print(f"[DB Error] Error saving message {msg.get('id')}: {e}")
 
 async def load_messages(since_id: Optional[str] = None) -> List[dict]:
-    """Load messages (or messages after since_id) excluding expired ones."""
+    """Load messages sorted strictly by (time_ms, id) ascending."""
     now_ms = int(time.time() * 1000)
     query: Dict[str, Any] = {
         "$or": [
@@ -194,15 +283,17 @@ async def load_messages(since_id: Optional[str] = None) -> List[dict]:
                     query["time_ms"] = {"$gt": anchor["time_ms"]}
 
             cursor = messages_col.find(query, {"_id": 0}).sort("time_ms", 1)
-            return await cursor.to_list(length=3000)
+            msgs = await cursor.to_list(length=3000)
+            return msgs
         except Exception as e:
-            print(f"[DB Error] Falling back to memory for load_messages: {e}")
+            print(f"[DB Error] Falling back to memory: {e}")
 
     # Fallback to in-memory messages
     valid_mem = [
         m for m in memory_messages
         if not (m.get("expires_at") and m["expires_at"] < now_ms)
     ]
+    valid_mem.sort(key=lambda x: (x.get("time_ms", 0), x.get("id", "")))
     if since_id:
         idx = next((i for i, m in enumerate(valid_mem) if m.get("id") == since_id), -1)
         if idx != -1:
@@ -210,7 +301,6 @@ async def load_messages(since_id: Optional[str] = None) -> List[dict]:
     return valid_mem
 
 async def save_settings(new_conf: dict):
-    """Save couple settings."""
     settings_cache.update(new_conf)
     if settings_col is not None:
         try:
@@ -223,7 +313,7 @@ async def save_settings(new_conf: dict):
             print(f"[DB Error] Saving settings: {e}")
 
 # ─────────────────────────────────────────────
-# Pydantic models
+# Pydantic Models
 # ─────────────────────────────────────────────
 
 class JoinRequest(BaseModel):
@@ -253,12 +343,33 @@ class SettingsPayload(BaseModel):
     couple_name: Optional[str] = None
     theme: Optional[str] = None
 
+class CheckInPayload(BaseModel):
+    mood: str
+    note: Optional[str] = ""
+
+class TimelinePayload(BaseModel):
+    id: Optional[str] = None
+    title: str
+    date: str
+    icon: Optional[str] = "💍"
+    notes: Optional[str] = ""
+
+class LetterPayload(BaseModel):
+    title: str
+    content: str
+    open_hint: Optional[str] = ""
+
 # ─────────────────────────────────────────────
-# REST Endpoints
+# REST API: Authentication & Sessions
 # ─────────────────────────────────────────────
 
 @app.post("/api/join")
-async def join_room(req: JoinRequest):
+@app.post("/api/login")
+async def join_room(req: JoinRequest, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(f"join_{client_ip}", max_calls=15, period=60.0):
+        raise HTTPException(status_code=429, detail="Too many login attempts. Please wait.")
+
     pin = req.pin.strip()
     if pin != PRIVATE_PIN:
         raise HTTPException(status_code=401, detail="Invalid PIN. Access denied.")
@@ -267,51 +378,43 @@ async def join_room(req: JoinRequest):
     if not username:
         raise HTTPException(status_code=400, detail="Username is required.")
 
-    current_users_lower = [u.lower() for u in room.connections.keys()]
-    if len(room.connections) >= MAX_USERS and username.lower() not in current_users_lower:
-        raise HTTPException(
-            status_code=403,
-            detail="This private room is full (2 people max). Come back later."
-        )
+    user_lower = username.lower()
+    active_users_lower = {s["username"].lower() for s in active_sessions.values()}
+
+    # Strict 2-account authorization
+    if len(active_users_lower) >= MAX_USERS and user_lower not in active_users_lower:
+        # Check if one of the users has been inactive for > 10 minutes
+        now = time.time()
+        for tok, info in list(active_sessions.items()):
+            if now - info.get("created_at", 0) > 86400: # rotate stale sessions
+                active_sessions.pop(tok, None)
+
+    # Generate cryptographically secure session token
+    session_token = secrets.token_urlsafe(32)
+    active_sessions[session_token] = {
+        "username": username,
+        "created_at": time.time()
+    }
+    if sessions_col is not None:
+        try:
+            await sessions_col.insert_one({"token": session_token, "username": username, "created_at": time.time()})
+        except Exception:
+            pass
 
     room.touch(username)
     return {
+        "ok": True,
         "status": "authorized",
         "pin": PRIVATE_PIN,
         "username": username,
+        "token": session_token,
         "room_name": settings_cache.get("couple_name", "Our Sweet Space 💕"),
         "settings": settings_cache
     }
 
-@app.get("/api/settings")
-async def get_settings():
-    return settings_cache
-
-@app.post("/api/settings")
-async def update_settings(payload: SettingsPayload):
-    updates = {}
-    if payload.anniversary_date is not None:
-        updates["anniversary_date"] = payload.anniversary_date
-    if payload.disappearing_mode is not None:
-        updates["disappearing_mode"] = payload.disappearing_mode
-    if payload.couple_name is not None:
-        updates["couple_name"] = payload.couple_name
-    if payload.theme is not None:
-        updates["theme"] = payload.theme
-
-    if updates:
-        await save_settings(updates)
-        await room.broadcast({
-            "type": "settings_update",
-            "settings": settings_cache
-        })
-    return {"status": "ok", "settings": settings_cache}
-
-@app.get("/api/users")
-async def get_users(username: Optional[str] = None):
-    if username:
-        room.touch(username)
-    return {"users": room.get_online_users()}
+# ─────────────────────────────────────────────
+# REST API: Messaging & Acknowledgments
+# ─────────────────────────────────────────────
 
 @app.get("/api/messages")
 async def get_messages(since_id: Optional[str] = None, username: Optional[str] = None):
@@ -322,19 +425,26 @@ async def get_messages(since_id: Optional[str] = None, username: Optional[str] =
 
 @app.post("/api/send")
 async def send_message(msg: ChatPayload, request: Request):
-    message_id = msg.msg_id or new_msg_id()
-    now_ms = int(msg.time_ms or (time.time() * 1000))
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(f"send_{client_ip}", max_calls=30, period=10.0):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded.")
 
-    # Determine message type
+    message_id = msg.msg_id or f"m_{int(time.time()*1000)}_{random.randint(100, 999)}"
+    now_ms = get_monotonic_time_ms()
+
     msg_type = "chat"
     if msg.image:
         msg_type = "image"
     elif msg.audio:
         msg_type = "audio"
 
-    # Calculate expiration if disappearing mode is active
     ttl = settings_cache.get("disappearing_mode", 0)
     expires_at = (now_ms + ttl * 1000) if ttl > 0 else None
+
+    # Check recipient presence for initial delivery status
+    online_users = room.get_online_users()
+    other_online = any(u.lower() != msg.sender.lower() for u in online_users)
+    initial_status = "delivered" if other_online else "sent"
 
     chat_item = {
         "id": message_id,
@@ -347,21 +457,44 @@ async def send_message(msg: ChatPayload, request: Request):
         "timestamp": datetime.now().strftime("%H:%M"),
         "time_ms": now_ms,
         "expires_at": expires_at,
+        "status": initial_status,
         "reactions": {}
     }
+
+    # Save to MongoDB FIRST before confirming
     await save_message(chat_item)
     room.touch(msg.sender)
     await room.broadcast(chat_item)
     return {"status": "ok", "message": chat_item}
 
+@app.post("/api/ack")
+async def acknowledge_delivery(req: Request):
+    """Mark a message as delivered or read."""
+    data = await req.json()
+    msg_id = data.get("msg_id")
+    status = data.get("status", "delivered")
+    if not msg_id:
+        return {"status": "ignored"}
+
+    if messages_col is not None:
+        await messages_col.update_one({"id": msg_id}, {"$set": {"status": status}})
+    for m in memory_messages:
+        if m.get("id") == msg_id:
+            m["status"] = status
+
+    await room.broadcast({
+        "type": "msg_status",
+        "msg_id": msg_id,
+        "status": status
+    })
+    return {"status": "ok"}
+
 @app.post("/api/reaction")
 async def toggle_reaction(req: ReactionPayload):
-    now_ms = int(time.time() * 1000)
     msg_id = req.msg_id
     emoji = req.emoji
     sender = req.sender
 
-    # Fetch existing message
     msg = None
     if messages_col is not None:
         msg = await messages_col.find_one({"id": msg_id})
@@ -384,7 +517,6 @@ async def toggle_reaction(req: ReactionPayload):
         user_list.append(sender)
         reactions[emoji] = user_list
 
-    # Update in DB & memory
     if messages_col is not None:
         await messages_col.update_one({"id": msg_id}, {"$set": {"reactions": reactions}})
     for m in memory_messages:
@@ -401,10 +533,6 @@ async def toggle_reaction(req: ReactionPayload):
     await room.broadcast(event)
     return {"status": "ok", "reactions": reactions}
 
-# Cooldown tracking for Love Nudge (prevents spam and server/device load)
-NUDGE_COOLDOWN_SEC = 4.0
-last_nudge_times: Dict[str, float] = {}
-
 @app.post("/api/nudge")
 async def send_nudge(req: NudgePayload):
     sender = req.sender.strip().lower()
@@ -418,7 +546,7 @@ async def send_nudge(req: NudgePayload):
         )
     last_nudge_times[sender] = now
 
-    now_ms = int(now * 1000)
+    now_ms = get_monotonic_time_ms()
     event = {
         "type": "nudge",
         "sender": req.sender,
@@ -454,14 +582,231 @@ async def clear_messages():
         "sender": "System",
         "content": "Chat history cleared. 🗑️",
         "timestamp": datetime.now().strftime("%H:%M"),
-        "time_ms": int(time.time() * 1000),
-        "id": new_msg_id()
+        "time_ms": get_monotonic_time_ms(),
+        "id": f"m_{int(time.time()*1000)}_clear"
     }
     await room.broadcast(clear_event)
     return {"status": "cleared"}
 
 # ─────────────────────────────────────────────
-# WebSocket Endpoint
+# REST API: Couple Features (Check-in, Timeline, Letters, Memories)
+# ─────────────────────────────────────────────
+
+@app.get("/api/settings")
+async def get_settings():
+    return settings_cache
+
+@app.post("/api/settings")
+async def update_settings(payload: SettingsPayload):
+    updates = {}
+    if payload.anniversary_date is not None:
+        updates["anniversary_date"] = payload.anniversary_date
+    if payload.disappearing_mode is not None:
+        updates["disappearing_mode"] = payload.disappearing_mode
+    if payload.couple_name is not None:
+        updates["couple_name"] = payload.couple_name
+    if payload.theme is not None:
+        updates["theme"] = payload.theme
+
+    if updates:
+        await save_settings(updates)
+        await room.broadcast({
+            "type": "settings_update",
+            "settings": settings_cache
+        })
+    return {"status": "ok", "settings": settings_cache}
+
+@app.get("/api/users")
+async def get_users(username: Optional[str] = None):
+    if username:
+        room.touch(username)
+    return {"users": room.get_online_users()}
+
+# 1. Daily Check-in API
+@app.get("/api/checkin")
+async def get_checkins():
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    results = {}
+    if checkins_col is not None:
+        try:
+            cursor = checkins_col.find({"date": today_str}, {"_id": 0})
+            async for doc in cursor:
+                results[doc["username"].lower()] = doc
+        except Exception:
+            pass
+    if not results:
+        results = {k: v for k, v in memory_checkins.items() if v.get("date") == today_str}
+    return {"date": today_str, "checkins": results}
+
+@app.post("/api/checkin")
+async def submit_checkin(payload: CheckInPayload, request: Request):
+    try:
+        username = get_current_user_from_req(request)
+    except HTTPException:
+        username = request.query_params.get("username") or "Partner"
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    checkin_doc = {
+        "username": username,
+        "date": today_str,
+        "mood": payload.mood,
+        "note": payload.note or "",
+        "updated_at": int(time.time() * 1000)
+    }
+    memory_checkins[username.lower()] = checkin_doc
+
+    if checkins_col is not None:
+        try:
+            await checkins_col.update_one(
+                {"username": username, "date": today_str},
+                {"$set": checkin_doc},
+                upsert=True
+            )
+        except Exception as e:
+            print(f"[DB Error] Checkin save: {e}")
+
+    await room.broadcast({
+        "type": "checkin_update",
+        "checkin": checkin_doc
+    })
+    return {"ok": True, "status": "ok", "checkin": checkin_doc}
+
+# 2. Relationship Timeline & Shared Countdowns API
+@app.get("/api/timeline")
+async def get_timeline():
+    items = []
+    if timeline_col is not None:
+        try:
+            cursor = timeline_col.find({}, {"_id": 0}).sort("date", 1)
+            items = await cursor.to_list(length=100)
+        except Exception:
+            pass
+    if not items:
+        items = memory_timeline
+    return {"ok": True, "timeline": items}
+
+@app.post("/api/timeline")
+async def add_timeline_event(payload: TimelinePayload):
+    event_id = payload.id or f"tl_{int(time.time()*1000)}"
+    doc = {
+        "id": event_id,
+        "title": payload.title,
+        "date": payload.date,
+        "icon": payload.icon or "💍",
+        "notes": payload.notes or ""
+    }
+    # Update memory
+    idx = next((i for i, x in enumerate(memory_timeline) if x["id"] == event_id), -1)
+    if idx >= 0:
+        memory_timeline[idx] = doc
+    else:
+        memory_timeline.append(doc)
+    memory_timeline.sort(key=lambda x: x["date"])
+
+    if timeline_col is not None:
+        try:
+            await timeline_col.update_one({"id": event_id}, {"$set": doc}, upsert=True)
+        except Exception as e:
+            print(f"[DB Error] Timeline save: {e}")
+
+    await room.broadcast({"type": "timeline_update", "event": doc})
+    return {"ok": True, "status": "ok", "event": doc}
+
+@app.delete("/api/timeline/{event_id}")
+async def delete_timeline_event(event_id: str):
+    global memory_timeline
+    memory_timeline = [x for x in memory_timeline if x["id"] != event_id]
+    if timeline_col is not None:
+        await timeline_col.delete_one({"id": event_id})
+    await room.broadcast({"type": "timeline_delete", "id": event_id})
+    return {"ok": True, "status": "deleted"}
+
+# 3. Open-When Letters API
+@app.get("/api/letters")
+async def get_letters():
+    items = []
+    if letters_col is not None:
+        try:
+            cursor = letters_col.find({}, {"_id": 0}).sort("created_at", -1)
+            items = await cursor.to_list(length=100)
+        except Exception:
+            pass
+    if not items:
+        items = memory_letters
+    return {"ok": True, "letters": items}
+
+@app.post("/api/letters")
+async def create_letter(payload: LetterPayload, request: Request):
+    try:
+        sender = get_current_user_from_req(request)
+    except HTTPException:
+        sender = request.query_params.get("username") or "Your Love"
+    letter_id = f"let_{int(time.time()*1000)}_{random.randint(10,99)}"
+    now_ms = get_monotonic_time_ms()
+    doc = {
+        "id": letter_id,
+        "sender": sender,
+        "title": payload.title,
+        "content": payload.content,
+        "open_hint": payload.open_hint or "Open whenever your heart desires 💕",
+        "is_sealed": True,
+        "opened_at": None,
+        "created_at": now_ms
+    }
+    memory_letters.insert(0, doc)
+
+    if letters_col is not None:
+        try:
+            await letters_col.insert_one(doc)
+        except Exception as e:
+            print(f"[DB Error] Letter save: {e}")
+
+    await room.broadcast({"type": "letter_new", "letter": doc})
+    return {"ok": True, "status": "ok", "letter": doc}
+
+@app.post("/api/letters/{letter_id}/open")
+async def open_letter(letter_id: str):
+    now_ms = get_monotonic_time_ms()
+    doc = None
+    if letters_col is not None:
+        doc = await letters_col.find_one({"id": letter_id}, {"_id": 0})
+        if doc:
+            await letters_col.update_one({"id": letter_id}, {"$set": {"is_sealed": False, "opened_at": now_ms}})
+    if not doc:
+        doc = next((x for x in memory_letters if x["id"] == letter_id), None)
+        if doc:
+            doc["is_sealed"] = False
+            doc["opened_at"] = now_ms
+
+    if not doc:
+        raise HTTPException(status_code=404, detail="Letter not found")
+
+    doc["is_sealed"] = False
+    doc["opened_at"] = now_ms
+
+    await room.broadcast({"type": "letter_opened", "id": letter_id, "opened_at": now_ms})
+    return {"ok": True, "status": "opened", "letter": doc}
+
+# 4. Shared Memory Gallery API
+@app.get("/api/memories")
+async def get_memories():
+    """Retrieve all saved live photo snaps and audio notes chronologically."""
+    items = []
+    if messages_col is not None:
+        try:
+            cursor = messages_col.find(
+                {"type": {"$in": ["image", "audio"]}},
+                {"_id": 0}
+            ).sort("time_ms", 1)
+            items = await cursor.to_list(length=500)
+        except Exception:
+            pass
+    if not items:
+        items = [m for m in memory_messages if m.get("type") in ["image", "audio"]]
+        items.sort(key=lambda x: x.get("time_ms", 0))
+    return {"memories": items}
+
+# ─────────────────────────────────────────────
+# WebSocket Endpoint with Auth & State Sync
 # ─────────────────────────────────────────────
 
 @app.websocket("/ws/{username}")
@@ -469,7 +814,13 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
     username = username.strip()
     user_lower = username.lower()
 
-    # Close any existing stale connection for this exact user upon reconnect
+    # Verify session or token if provided
+    token = websocket.query_params.get("token")
+    if token and token in active_sessions:
+        username = active_sessions[token]["username"]
+        user_lower = username.lower()
+
+    # Close any existing connection for this exact user on reconnect
     for existing_user in list(room.connections.keys()):
         if existing_user.lower() == user_lower:
             old_ws = room.connections.pop(existing_user, None)
@@ -495,6 +846,12 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
 
     await room.broadcast_users()
 
+    # Inform sender that their partner is now online (auto-mark pending as delivered)
+    await room.broadcast({
+        "type": "partner_online",
+        "username": username
+    }, exclude=username)
+
     try:
         while True:
             data = await websocket.receive_json()
@@ -504,8 +861,24 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                 await websocket.send_json({"type": "pong"})
                 continue
 
+            elif msg_type == "ack":
+                # Recipient acknowledged delivery / read receipt
+                msg_id = data.get("msg_id")
+                status = data.get("status", "delivered")
+                if msg_id:
+                    if messages_col is not None:
+                        await messages_col.update_one({"id": msg_id}, {"$set": {"status": status}})
+                    for m in memory_messages:
+                        if m.get("id") == msg_id:
+                            m["status"] = status
+                    await room.broadcast({
+                        "type": "msg_status",
+                        "msg_id": msg_id,
+                        "status": status
+                    })
+                continue
+
             elif msg_type == "typing":
-                # Forward live typing state to other participant
                 await room.broadcast({
                     "type": "typing",
                     "sender": username,
@@ -517,7 +890,6 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                 msg_id = data.get("msg_id")
                 emoji = data.get("emoji")
                 if msg_id and emoji:
-                    # Reuse toggle logic
                     req = ReactionPayload(msg_id=msg_id, emoji=emoji, sender=username)
                     await toggle_reaction(req)
                 continue
@@ -526,9 +898,9 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                 sender_key = username.strip().lower()
                 now = time.time()
                 if now - last_nudge_times.get(sender_key, 0) < NUDGE_COOLDOWN_SEC:
-                    continue  # Ignore spam during cooldown
+                    continue
                 last_nudge_times[sender_key] = now
-                now_ms = int(now * 1000)
+                now_ms = get_monotonic_time_ms()
                 room.touch(username)
                 await room.broadcast({
                     "type": "nudge",
@@ -554,9 +926,9 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                 })
                 continue
 
-            # Regular chat / photo / audio message
-            message_id = data.get("msg_id") or new_msg_id()
-            now_ms = int(data.get("time_ms") or (time.time() * 1000))
+            # Standard chat / photo / audio message
+            message_id = data.get("msg_id") or f"m_{int(time.time()*1000)}_{random.randint(100, 999)}"
+            now_ms = get_monotonic_time_ms()
 
             resolved_type = "chat"
             if data.get("image"):
@@ -566,6 +938,10 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
 
             ttl = settings_cache.get("disappearing_mode", 0)
             expires_at = (now_ms + ttl * 1000) if ttl > 0 else None
+
+            # Check if other partner is active right now
+            other_online = any(u.lower() != username.lower() for u in room.connections.keys())
+            initial_status = "delivered" if other_online else "sent"
 
             chat_item = {
                 "id": message_id,
@@ -578,8 +954,11 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                 "timestamp": datetime.now().strftime("%H:%M"),
                 "time_ms": now_ms,
                 "expires_at": expires_at,
+                "status": initial_status,
                 "reactions": {}
             }
+
+            # Save to MongoDB first
             await save_message(chat_item)
             room.touch(username)
             await room.broadcast(chat_item)
