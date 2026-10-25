@@ -1,12 +1,13 @@
 """
-Private Chat Server — 2-Person Only
+Private Chat Server - 2-Person Only
 PIN: 1012 (hardcoded, always alive)
-Storage: MongoDB (persistent — chats survive server restarts)
+Storage: MongoDB (persistent - chats survive server restarts)
 """
 
 import asyncio
 import random
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -17,6 +18,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
 import os
+import sys
+
+# Force UTF-8 output on Windows consoles
+if sys.stdout.encoding != 'utf-8':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 # ─────────────────────────────────────────────
 # App & Config
@@ -29,30 +38,27 @@ MONGO_URI = "mongodb+srv://devanghadiyal:dev%40ng%7B8954%7D@cluster0.owtzs.mongo
 DB_NAME   = "Chatserver"
 COL_NAME  = "messages"
 
-app = FastAPI(title="Private Chat — 1012")
-
 # ─────────────────────────────────────────────
-# MongoDB connection
+# MongoDB connection (lifespan)
 # ─────────────────────────────────────────────
 
 mongo_client: Optional[motor.motor_asyncio.AsyncIOMotorClient] = None
 db = None
 messages_col = None
 
-@app.on_event("startup")
-async def startup_db():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     global mongo_client, db, messages_col
     mongo_client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
     db = mongo_client[DB_NAME]
     messages_col = db[COL_NAME]
-    # Ensure index for fast chronological queries
     await messages_col.create_index("time_ms")
-    print(f"[DB] Connected to MongoDB — {DB_NAME}.{COL_NAME}")
-
-@app.on_event("shutdown")
-async def shutdown_db():
+    print(f"[DB] Connected to MongoDB - {DB_NAME}.{COL_NAME}")
+    yield
     if mongo_client:
         mongo_client.close()
+
+app = FastAPI(title="Private Chat - 1012", lifespan=lifespan)
 
 # ─────────────────────────────────────────────
 # In-memory room state (connections only)
@@ -298,7 +304,7 @@ async def get_index():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("  💑 Private Chat Server")
+    print("  [PRIVATE CHAT SERVER]")
     print(f"  PIN: {PRIVATE_PIN}  |  Max users: {MAX_USERS}")
     print("  Local:   http://127.0.0.1:8000")
     print("  Network: http://0.0.0.0:8000")
