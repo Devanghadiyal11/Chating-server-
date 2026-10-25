@@ -326,8 +326,27 @@ async def save_message(msg: dict):
     if len(memory_messages) > 500:
         memory_messages.pop(0)
 
+def purge_dummy_messages():
+    """Purge any empty/whitespace dummy messages from memory caches."""
+    global memory_messages, memory_events
+    memory_messages = [
+        m for m in memory_messages
+        if bool(str(m.get("content", "")).strip()) or bool(m.get("image")) or bool(m.get("audio"))
+    ]
+    memory_events = [
+        ev for ev in memory_events
+        if ev.get("type") != "message.created" or (
+            isinstance(ev.get("payload"), dict) and (
+                bool(str(ev["payload"].get("content", "")).strip()) or
+                bool(ev["payload"].get("image")) or
+                bool(ev["payload"].get("audio"))
+            )
+        )
+    ]
+
 async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int] = None) -> List[dict]:
     """Ephemeral in-memory messages only."""
+    purge_dummy_messages()
     now_ms = int(time.time() * 1000)
     valid_mem = [
         m for m in memory_messages
@@ -736,12 +755,30 @@ async def clear_messages():
 @app.get("/api/events")
 async def get_events(after_seq: Optional[int] = None, limit: int = 250):
     """Retrieve active live session events. Zero database persistence."""
+    purge_dummy_messages()
     limit = min(max(1, limit), 500)
     mem = memory_events
     if after_seq is not None:
         mem = [ev for ev in mem if ev.get("seq", 0) > after_seq]
     mem = sorted(mem, key=lambda x: x.get("seq", 0))[:limit]
     return {"events": mem}
+
+@app.get("/api/purge_dummies")
+@app.post("/api/purge_dummies")
+async def purge_dummies():
+    purge_dummy_messages()
+    if messages_col is not None:
+        try:
+            await messages_col.delete_many({
+                "$and": [
+                    {"$or": [{"content": ""}, {"content": None}, {"content": {"$regex": r"^\s*$"}}]},
+                    {"$or": [{"image": ""}, {"image": None}]},
+                    {"$or": [{"audio": ""}, {"audio": None}]}
+                ]
+            })
+        except Exception:
+            pass
+    return {"status": "ok", "remaining_messages": len(memory_messages)}
 
 # ─────────────────────────────────────────────
 # REST API: Couple Settings & Presence
@@ -839,8 +876,9 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
             data = await websocket.receive_json()
             msg_type = data.get("type", "chat")
 
-            if msg_type == "ping":
-                await websocket.send_json({"type": "pong"})
+            if msg_type in ("ping", "pong", "typing"):
+                if msg_type == "ping":
+                    await websocket.send_json({"type": "pong"})
                 continue
 
             elif msg_type == "ack":
