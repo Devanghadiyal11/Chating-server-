@@ -548,6 +548,82 @@
     .photo-shield {
       position: absolute; inset: 0; background: transparent; z-index: 5;
     }
+    .live-photo-badge {
+      position: absolute; top: 8px; left: 8px;
+      background: rgba(10, 10, 16, 0.75); backdrop-filter: blur(6px);
+      border: 1px solid rgba(34, 197, 94, 0.5);
+      color: #4ade80; font-size: 0.65rem; font-weight: 800;
+      padding: 3px 8px; border-radius: 12px;
+      display: flex; align-items: center; gap: 5px;
+      pointer-events: none; z-index: 6;
+      text-transform: uppercase; letter-spacing: 0.3px;
+    }
+    .live-badge-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: #22c55e; box-shadow: 0 0 6px #22c55e;
+      animation: recordPulse 1.2s infinite alternate;
+    }
+
+    /* ─── In-App Live Camera Modal ─── */
+    .camera-modal {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0, 0, 0, 0.96); backdrop-filter: blur(14px);
+      z-index: 650; flex-direction: column;
+      align-items: center; justify-content: space-between;
+      padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(24px + env(safe-area-inset-bottom, 0px));
+    }
+    .camera-top-bar {
+      width: 100%; max-width: 440px;
+      display: flex; align-items: center; justify-content: space-between;
+      color: #fff; z-index: 10;
+    }
+    .camera-live-pill {
+      background: rgba(34, 197, 94, 0.2); border: 1px solid #22c55e;
+      color: #4ade80; font-size: 0.74rem; font-weight: 800;
+      padding: 4px 12px; border-radius: 20px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .camera-viewport-wrap {
+      position: relative; width: 100%; max-width: 420px;
+      aspect-ratio: 3/4; max-height: 62vh;
+      border-radius: 22px; overflow: hidden;
+      background: #000; box-shadow: 0 10px 40px rgba(0,0,0,0.85);
+      border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .camera-video {
+      width: 100%; height: 100%; object-fit: cover;
+    }
+    .camera-video.mirror { transform: scaleX(-1); }
+    .camera-canvas {
+      display: none; width: 100%; height: 100%; object-fit: cover;
+    }
+    .camera-controls-bar {
+      width: 100%; max-width: 420px;
+      display: flex; align-items: center; justify-content: space-around;
+      padding-top: 10px; z-index: 10;
+    }
+    .btn-shutter {
+      width: 74px; height: 74px; border-radius: 50%;
+      background: transparent; border: 4px solid #fff;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; transition: transform 0.15s;
+    }
+    .btn-shutter:active { transform: scale(0.92); }
+    .btn-shutter-inner {
+      width: 58px; height: 58px; border-radius: 50%;
+      background: #fff;
+    }
+    .btn-cam-action {
+      width: 48px; height: 48px; border-radius: 50%;
+      background: rgba(255,255,255,0.16); border: 1px solid rgba(255,255,255,0.25);
+      color: #fff; font-size: 1.3rem; display: flex; align-items: center; justify-content: center;
+      cursor: pointer; transition: transform 0.15s;
+    }
+    .btn-cam-action:active { transform: scale(0.9); }
+    .camera-confirm-bar {
+      display: none; width: 100%; max-width: 420px; gap: 12px;
+    }
 
     /* ─── Typing Indicator ─── */
     .typing-bar {
@@ -1085,9 +1161,9 @@
 
       <!-- Controls Row -->
       <div class="input-row">
-        <!-- Photo Button -->
-        <input type="file" id="photoInput" accept="image/*" style="display:none" onchange="onPhotoSelected(event)">
-        <button class="btn-tool" onclick="document.getElementById('photoInput').click()" title="Send Photo" aria-label="Send photo">
+        <!-- Live Camera Capture Button (No Gallery) -->
+        <input type="file" id="cameraInput" accept="image/*" capture="user" style="display:none" onchange="onNativeCameraCaptured(event)">
+        <button class="btn-tool" onclick="openLiveCamera()" title="Capture Live Photo" aria-label="Capture live photo">
           📷
         </button>
 
@@ -1122,6 +1198,37 @@
       </div>
     </div>
   </main>
+</div>
+
+<!-- In-App Live Camera Viewfinder Modal -->
+<div class="camera-modal" id="cameraModal">
+  <div class="camera-top-bar">
+    <div class="camera-live-pill">
+      <span class="live-badge-dot"></span>
+      <span>LIVE CAMERA</span>
+    </div>
+    <button class="action-mini-btn" style="color:#fff;font-size:1.4rem;" onclick="closeLiveCamera()">✕</button>
+  </div>
+
+  <div class="camera-viewport-wrap">
+    <video id="cameraVideo" class="camera-video mirror" autoplay playsinline muted></video>
+    <canvas id="cameraCanvas" class="camera-canvas"></canvas>
+  </div>
+
+  <!-- Initial Camera Shutter Controls -->
+  <div class="camera-controls-bar" id="cameraControlsBar">
+    <button class="btn-cam-action" onclick="flipCamera()" title="Switch Front/Back Camera">🔄</button>
+    <button class="btn-shutter" onclick="captureLivePhoto()" title="Take Live Photo">
+      <div class="btn-shutter-inner"></div>
+    </button>
+    <button class="btn-cam-action" onclick="triggerNativeLiveCamera()" title="Open System Live Camera">📸</button>
+  </div>
+
+  <!-- Confirm / Retake Controls -->
+  <div class="camera-confirm-bar" id="cameraConfirmBar">
+    <button class="btn-sm" style="min-height:46px;" onclick="retakeLivePhoto()">🔄 Retake</button>
+    <button class="btn-primary" style="flex:2;min-height:46px;" onclick="sendCapturedLivePhoto()">Send Live Moment 🚀</button>
+  </div>
 </div>
 
 <!-- View-Only Photo Lightbox -->
@@ -2042,11 +2149,12 @@
         `;
       }
 
-      // Photo message
+      // Live Photo message
       if (msg.image) {
         contentHtml += `
           <div class="photo-secure-wrapper" onclick="openLightbox('${escHtml(msg.image)}')" oncontextmenu="return false;">
-            <img class="chat-photo" src="${escHtml(msg.image)}" draggable="false" alt="Photo">
+            <span class="live-photo-badge"><span class="live-badge-dot"></span> Live Moment</span>
+            <img class="chat-photo" src="${escHtml(msg.image)}" draggable="false" alt="Live Photo">
             <div class="photo-shield" oncontextmenu="return false;" ondragstart="return false;"></div>
           </div>
         `;
@@ -2339,10 +2447,114 @@
     }
   });
 
-  // ── Photo Handling & Lightbox ─────────────────
-  function onPhotoSelected(e) {
+  // ── Live Camera Capture (No Gallery Uploads) ───
+  let cameraStream = null;
+  let currentFacingMode = "user"; // "user" (front/selfie) or "environment" (back)
+  let capturedImageDataUrl = null;
+
+  async function openLiveCamera() {
+    capturedImageDataUrl = null;
+    document.getElementById("cameraModal").style.display = "flex";
+    document.getElementById("cameraVideo").style.display = "block";
+    document.getElementById("cameraCanvas").style.display = "none";
+    document.getElementById("cameraControlsBar").style.display = "flex";
+    document.getElementById("cameraConfirmBar").style.display = "none";
+    await startCameraStream();
+  }
+
+  async function startCameraStream() {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(t => t.stop());
+      cameraStream = null;
+    }
+    const video = document.getElementById("cameraVideo");
+    video.classList.toggle("mirror", currentFacingMode === "user");
+
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: currentFacingMode },
+          width: { ideal: 1280 },
+          height: { ideal: 960 }
+        },
+        audio: false
+      });
+      video.srcObject = cameraStream;
+      await video.play();
+    } catch(err) {
+      console.warn("In-app live camera stream failed or blocked, offering OS live camera:", err);
+      triggerNativeLiveCamera();
+    }
+  }
+
+  function flipCamera() {
+    currentFacingMode = (currentFacingMode === "user") ? "environment" : "user";
+    startCameraStream();
+  }
+
+  function closeLiveCamera() {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(t => t.stop());
+      cameraStream = null;
+    }
+    document.getElementById("cameraModal").style.display = "none";
+  }
+
+  function captureLivePhoto() {
+    const video = document.getElementById("cameraVideo");
+    const canvas = document.getElementById("cameraCanvas");
+
+    if (!video.videoWidth || !video.videoHeight) return;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+
+    if (currentFacingMode === "user") {
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    if (currentFacingMode === "user") {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+    }
+
+    capturedImageDataUrl = canvas.toDataURL("image/jpeg", 0.82);
+
+    video.style.display = "none";
+    canvas.style.display = "block";
+    document.getElementById("cameraControlsBar").style.display = "none";
+    document.getElementById("cameraConfirmBar").style.display = "flex";
+
+    if (navigator.vibrate) navigator.vibrate(50);
+    playTone(700, 'sine', 0.12);
+  }
+
+  function retakeLivePhoto() {
+    capturedImageDataUrl = null;
+    document.getElementById("cameraVideo").style.display = "block";
+    document.getElementById("cameraCanvas").style.display = "none";
+    document.getElementById("cameraControlsBar").style.display = "flex";
+    document.getElementById("cameraConfirmBar").style.display = "none";
+  }
+
+  function sendCapturedLivePhoto() {
+    if (!capturedImageDataUrl) return;
+    stagedPhoto = capturedImageDataUrl;
+    closeLiveCamera();
+    sendMessage();
+  }
+
+  function triggerNativeLiveCamera() {
+    closeLiveCamera();
+    document.getElementById("cameraInput").click();
+  }
+
+  function onNativeCameraCaptured(e) {
     const file = e.target.files && e.target.files[0];
-    if (!file || !file.type.startsWith("image/")) return;
+    if (!file) return;
+
     const reader = new FileReader();
     reader.onload = ev => {
       const img = new Image();
@@ -2356,23 +2568,18 @@
         }
         canvas.width = w; canvas.height = h;
         canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-        stagedPhoto = canvas.toDataURL("image/jpeg", 0.78);
-        document.getElementById("stagingThumb").src = stagedPhoto;
-        document.getElementById("stagingName").textContent = file.name || "photo.jpg";
-        const kb = Math.round((stagedPhoto.length * 0.75) / 1024);
-        document.getElementById("stagingSize").textContent = `${kb} KB · Ready to send`;
-        document.getElementById("stagingBox").style.display = "flex";
-        document.getElementById("chatInput").focus();
+        stagedPhoto = canvas.toDataURL("image/jpeg", 0.80);
+        sendMessage();
       };
       img.src = ev.target.result;
     };
     reader.readAsDataURL(file);
+    e.target.value = "";
   }
 
   function clearStaging() {
     stagedPhoto = null;
     document.getElementById("stagingBox").style.display = "none";
-    document.getElementById("photoInput").value = "";
   }
 
   function openLightbox(src) {
