@@ -57,9 +57,7 @@ DB_NAME   = "Chatserver"
 COL_MSGS  = "messages"
 COL_CONF  = "settings"
 COL_SESS  = "sessions"
-COL_TIME  = "timeline"
-COL_LETT  = "letters"
-COL_CHCK  = "checkins"
+COL_EVNT  = "events"
 
 # ─────────────────────────────────────────────
 # State & Caches
@@ -70,9 +68,7 @@ db = None
 messages_col = None
 settings_col = None
 sessions_col = None
-timeline_col = None
-letters_col = None
-checkins_col = None
+events_col = None
 
 # Active session tokens: token -> {"username": str, "created_at": float}
 active_sessions: Dict[str, dict] = {}
@@ -97,12 +93,7 @@ settings_cache: Dict[str, Any] = {
 
 # In-memory fallbacks
 memory_messages: List[dict] = []
-memory_timeline: List[dict] = [
-    {"id": "t_1", "title": "When Our Story Began ✨", "date": "2024-02-14", "icon": "💍", "notes": "The most beautiful day"},
-    {"id": "t_2", "title": "Our First Date ☕", "date": "2024-02-18", "icon": "☕", "notes": "Coffee & endless conversations"}
-]
-memory_letters: List[dict] = []
-memory_checkins: Dict[str, dict] = {}
+memory_events: List[dict] = []
 
 def get_monotonic_time_ms() -> int:
     global last_monotonic_ms
@@ -148,7 +139,7 @@ async def cleanup_expired_messages():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global mongo_client, db, messages_col, settings_col, sessions_col, timeline_col, letters_col, checkins_col
+    global mongo_client, db, messages_col, settings_col, sessions_col, events_col
     try:
         mongo_client = motor.motor_asyncio.AsyncIOMotorClient(
             MONGO_URI,
@@ -158,12 +149,16 @@ async def lifespan(app: FastAPI):
         messages_col = db[COL_MSGS]
         settings_col = db[COL_CONF]
         sessions_col = db[COL_SESS]
-        timeline_col = db[COL_TIME]
-        letters_col = db[COL_LETT]
-        checkins_col = db[COL_CHCK]
+        events_col = db[COL_EVNT]
 
         await messages_col.create_index("time_ms")
         await messages_col.create_index("id", unique=True)
+        try:
+            await events_col.create_index("seq")
+            await events_col.create_index("eventId", unique=True)
+            await events_col.create_index("createdAt")
+        except Exception:
+            pass
         print(f"[DB] Connected to MongoDB Atlas - {DB_NAME}")
 
         # Load persisted settings
@@ -356,6 +351,86 @@ async def save_settings(new_conf: dict):
         except Exception as e:
             print(f"[DB Error] Saving settings: {e}")
 
+async def publish_event(
+    event_type: str,
+    actor_id: str,
+    payload: dict,
+    event_id: Optional[str] = None
+) -> dict:
+    """Unified Event Pipeline: Save to MongoDB first, assign atomic sequence, broadcast once."""
+    seq = await get_next_seq()
+    now_ms = get_monotonic_time_ms()
+    ev_id = event_id or f"ev_{int(time.time()*1000)}_{secrets.token_hex(4)}"
+
+    event_doc = {
+        "eventId": ev_id,
+        "roomId": "sweet_space",
+        "seq": seq,
+        "type": event_type,
+        "actorId": actor_id,
+        "payload": payload,
+        "createdAt": now_ms
+    }
+
+    # 1. Save to MongoDB events collection first (Save First)
+    if events_col is not None:
+        try:
+            await events_col.insert_one(event_doc.copy())
+        except Exception as e:
+            print(f"[Event Save Error] {e}")
+
+    memory_events.append(event_doc)
+    if len(memory_events) > 2000:
+        memory_events.pop(0)
+
+    # 2. Broadcast unified event envelope over WebSocket (Broadcast Second)
+    envelope = {
+        "type": "event",
+        "event": event_doc
+    }
+    await room.broadcast(envelope)
+
+    # 3. Backward-compatible legacy event broadcasts
+    if event_type == "message.created":
+        await room.broadcast(payload)
+    elif event_type == "nudge.created":
+        await room.broadcast({
+            "type": "nudge",
+            "sender": actor_id,
+            "timestamp": payload.get("timestamp", datetime.now().strftime("%H:%M")),
+            "time_ms": now_ms
+        })
+    elif event_type == "reaction.updated":
+        await room.broadcast({
+            "type": "reaction_update",
+            "msg_id": payload.get("msg_id"),
+            "reactions": payload.get("reactions"),
+            "sender": actor_id,
+            "emoji": payload.get("emoji")
+        })
+    elif event_type == "theme.updated":
+        await room.broadcast({
+            "type": "theme_update",
+            "theme": payload.get("theme"),
+            "sender": actor_id
+        })
+    elif event_type == "message.deleted":
+        await room.broadcast({
+            "type": "delete_message",
+            "msg_id": payload.get("msg_id")
+        })
+    elif event_type == "chat.cleared":
+        await room.broadcast({
+            "type": "system",
+            "sender": "System",
+            "content": "Chat history cleared. 🗑️",
+            "timestamp": payload.get("timestamp", datetime.now().strftime("%H:%M")),
+            "time_ms": now_ms,
+            "id": f"m_{int(time.time()*1000)}_clear"
+        })
+
+    return event_doc
+
 # ─────────────────────────────────────────────
 # Pydantic Models
 # ─────────────────────────────────────────────
@@ -388,22 +463,6 @@ class SettingsPayload(BaseModel):
     disappearing_mode: Optional[int] = None
     couple_name: Optional[str] = None
     theme: Optional[str] = None
-
-class CheckInPayload(BaseModel):
-    mood: str
-    note: Optional[str] = ""
-
-class TimelinePayload(BaseModel):
-    id: Optional[str] = None
-    title: str
-    date: str
-    icon: Optional[str] = "💍"
-    notes: Optional[str] = ""
-
-class LetterPayload(BaseModel):
-    title: str
-    content: str
-    open_hint: Optional[str] = ""
 
 # ─────────────────────────────────────────────
 # REST API: Authentication & Sessions
@@ -536,7 +595,7 @@ async def send_message(msg: ChatPayload, request: Request):
     # Save to MongoDB FIRST before confirming
     await save_message(chat_item)
     room.touch(msg.sender)
-    await room.broadcast(chat_item)
+    await publish_event("message.created", msg.sender, chat_item, event_id=f"ev_msg_{chat_item['id']}")
     return {"status": "ok", "message": chat_item}
 
 @app.post("/api/ack")
@@ -595,14 +654,13 @@ async def toggle_reaction(req: ReactionPayload):
         if m.get("id") == msg_id:
             m["reactions"] = reactions
 
-    event = {
-        "type": "reaction_update",
+    payload = {
         "msg_id": msg_id,
         "reactions": reactions,
         "sender": sender,
         "emoji": emoji
     }
-    await room.broadcast(event)
+    await publish_event("reaction.updated", sender, payload)
     return {"status": "ok", "reactions": reactions}
 
 @app.post("/api/nudge")
@@ -619,14 +677,13 @@ async def send_nudge(req: NudgePayload):
     last_nudge_times[sender] = now
 
     now_ms = get_monotonic_time_ms()
-    event = {
-        "type": "nudge",
+    payload = {
         "sender": req.sender,
         "timestamp": datetime.now().strftime("%H:%M"),
         "time_ms": now_ms
     }
     room.touch(req.sender)
-    await room.broadcast(event)
+    await publish_event("nudge.created", req.sender, payload)
     return {"status": "ok"}
 
 @app.delete("/api/messages/{msg_id}")
@@ -636,10 +693,7 @@ async def delete_single_message(msg_id: str):
     global memory_messages
     memory_messages = [m for m in memory_messages if m.get("id") != msg_id]
 
-    await room.broadcast({
-        "type": "delete_message",
-        "msg_id": msg_id
-    })
+    await publish_event("message.deleted", "user", {"msg_id": msg_id})
     return {"status": "deleted"}
 
 @app.delete("/api/messages")
@@ -649,19 +703,38 @@ async def clear_messages():
     global memory_messages
     memory_messages = []
 
-    clear_event = {
-        "type": "system",
-        "sender": "System",
-        "content": "Chat history cleared. 🗑️",
-        "timestamp": datetime.now().strftime("%H:%M"),
-        "time_ms": get_monotonic_time_ms(),
-        "id": f"m_{int(time.time()*1000)}_clear"
-    }
-    await room.broadcast(clear_event)
+    await publish_event("chat.cleared", "system", {"timestamp": datetime.now().strftime("%H:%M")})
     return {"status": "cleared"}
 
 # ─────────────────────────────────────────────
-# REST API: Couple Features (Check-in, Timeline, Letters, Memories)
+# REST API: Event Stream & Catch-up Recovery
+# ─────────────────────────────────────────────
+
+@app.get("/api/events")
+async def get_events(after_seq: Optional[int] = None, limit: int = 250):
+    """Retrieve event stream after a given sequence number for automatic reconnect catch-up."""
+    limit = min(max(1, limit), 500)
+    query: Dict[str, Any] = {}
+    if after_seq is not None:
+        query["seq"] = {"$gt": after_seq}
+
+    if events_col is not None:
+        try:
+            cursor = events_col.find(query, {"_id": 0}).sort("seq", 1).limit(limit)
+            events = await cursor.to_list(length=limit)
+            return {"events": events}
+        except Exception as e:
+            print(f"[DB Error] Fetching events: {e}")
+
+    # Fallback to in-memory events
+    mem = memory_events
+    if after_seq is not None:
+        mem = [ev for ev in mem if ev.get("seq", 0) > after_seq]
+    mem = sorted(mem, key=lambda x: x.get("seq", 0))[:limit]
+    return {"events": mem}
+
+# ─────────────────────────────────────────────
+# REST API: Couple Settings & Presence
 # ─────────────────────────────────────────────
 
 @app.get("/api/settings")
@@ -683,15 +756,8 @@ async def update_settings(payload: SettingsPayload):
     if updates:
         await save_settings(updates)
         if "theme" in updates:
-            await room.broadcast({
-                "type": "theme_update",
-                "theme": updates["theme"],
-                "sender": "Partner"
-            })
-        await room.broadcast({
-            "type": "settings_update",
-            "settings": settings_cache
-        })
+            await publish_event("theme.updated", "Partner", {"theme": updates["theme"]})
+        await publish_event("settings.updated", "Partner", {"settings": settings_cache})
     return {"status": "ok", "settings": settings_cache}
 
 @app.get("/api/users")
@@ -699,189 +765,6 @@ async def get_users(username: Optional[str] = None):
     if username:
         room.touch(username)
     return {"users": room.get_online_users()}
-
-# 1. Daily Check-in API
-@app.get("/api/checkin")
-async def get_checkins():
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    results = {}
-    if checkins_col is not None:
-        try:
-            cursor = checkins_col.find({"date": today_str}, {"_id": 0})
-            async for doc in cursor:
-                results[doc["username"].lower()] = doc
-        except Exception:
-            pass
-    if not results:
-        results = {k: v for k, v in memory_checkins.items() if v.get("date") == today_str}
-    return {"date": today_str, "checkins": results}
-
-@app.post("/api/checkin")
-async def submit_checkin(payload: CheckInPayload, request: Request):
-    try:
-        username = get_current_user_from_req(request)
-    except HTTPException:
-        username = request.query_params.get("username") or "Partner"
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    checkin_doc = {
-        "username": username,
-        "date": today_str,
-        "mood": payload.mood,
-        "note": payload.note or "",
-        "updated_at": int(time.time() * 1000)
-    }
-    memory_checkins[username.lower()] = checkin_doc
-
-    if checkins_col is not None:
-        try:
-            await checkins_col.update_one(
-                {"username": username, "date": today_str},
-                {"$set": checkin_doc},
-                upsert=True
-            )
-        except Exception as e:
-            print(f"[DB Error] Checkin save: {e}")
-
-    await room.broadcast({
-        "type": "checkin_update",
-        "checkin": checkin_doc
-    })
-    return {"ok": True, "status": "ok", "checkin": checkin_doc}
-
-# 2. Relationship Timeline & Shared Countdowns API
-@app.get("/api/timeline")
-async def get_timeline():
-    items = []
-    if timeline_col is not None:
-        try:
-            cursor = timeline_col.find({}, {"_id": 0}).sort("date", 1)
-            items = await cursor.to_list(length=100)
-        except Exception:
-            pass
-    if not items:
-        items = memory_timeline
-    return {"ok": True, "timeline": items}
-
-@app.post("/api/timeline")
-async def add_timeline_event(payload: TimelinePayload):
-    event_id = payload.id or f"tl_{int(time.time()*1000)}"
-    doc = {
-        "id": event_id,
-        "title": payload.title,
-        "date": payload.date,
-        "icon": payload.icon or "💍",
-        "notes": payload.notes or ""
-    }
-    # Update memory
-    idx = next((i for i, x in enumerate(memory_timeline) if x["id"] == event_id), -1)
-    if idx >= 0:
-        memory_timeline[idx] = doc
-    else:
-        memory_timeline.append(doc)
-    memory_timeline.sort(key=lambda x: x["date"])
-
-    if timeline_col is not None:
-        try:
-            await timeline_col.update_one({"id": event_id}, {"$set": doc}, upsert=True)
-        except Exception as e:
-            print(f"[DB Error] Timeline save: {e}")
-
-    await room.broadcast({"type": "timeline_update", "event": doc})
-    return {"ok": True, "status": "ok", "event": doc}
-
-@app.delete("/api/timeline/{event_id}")
-async def delete_timeline_event(event_id: str):
-    global memory_timeline
-    memory_timeline = [x for x in memory_timeline if x["id"] != event_id]
-    if timeline_col is not None:
-        await timeline_col.delete_one({"id": event_id})
-    await room.broadcast({"type": "timeline_delete", "id": event_id})
-    return {"ok": True, "status": "deleted"}
-
-# 3. Open-When Letters API
-@app.get("/api/letters")
-async def get_letters():
-    items = []
-    if letters_col is not None:
-        try:
-            cursor = letters_col.find({}, {"_id": 0}).sort("created_at", -1)
-            items = await cursor.to_list(length=100)
-        except Exception:
-            pass
-    if not items:
-        items = memory_letters
-    return {"ok": True, "letters": items}
-
-@app.post("/api/letters")
-async def create_letter(payload: LetterPayload, request: Request):
-    try:
-        sender = get_current_user_from_req(request)
-    except HTTPException:
-        sender = request.query_params.get("username") or "Your Love"
-    letter_id = f"let_{int(time.time()*1000)}_{random.randint(10,99)}"
-    now_ms = get_monotonic_time_ms()
-    doc = {
-        "id": letter_id,
-        "sender": sender,
-        "title": payload.title,
-        "content": payload.content,
-        "open_hint": payload.open_hint or "Open whenever your heart desires 💕",
-        "is_sealed": True,
-        "opened_at": None,
-        "created_at": now_ms
-    }
-    memory_letters.insert(0, doc)
-
-    if letters_col is not None:
-        try:
-            await letters_col.insert_one(doc)
-        except Exception as e:
-            print(f"[DB Error] Letter save: {e}")
-
-    await room.broadcast({"type": "letter_new", "letter": doc})
-    return {"ok": True, "status": "ok", "letter": doc}
-
-@app.post("/api/letters/{letter_id}/open")
-async def open_letter(letter_id: str):
-    now_ms = get_monotonic_time_ms()
-    doc = None
-    if letters_col is not None:
-        doc = await letters_col.find_one({"id": letter_id}, {"_id": 0})
-        if doc:
-            await letters_col.update_one({"id": letter_id}, {"$set": {"is_sealed": False, "opened_at": now_ms}})
-    if not doc:
-        doc = next((x for x in memory_letters if x["id"] == letter_id), None)
-        if doc:
-            doc["is_sealed"] = False
-            doc["opened_at"] = now_ms
-
-    if not doc:
-        raise HTTPException(status_code=404, detail="Letter not found")
-
-    doc["is_sealed"] = False
-    doc["opened_at"] = now_ms
-
-    await room.broadcast({"type": "letter_opened", "id": letter_id, "opened_at": now_ms})
-    return {"ok": True, "status": "opened", "letter": doc}
-
-# 4. Shared Memory Gallery API
-@app.get("/api/memories")
-async def get_memories():
-    """Retrieve all saved live photo snaps and audio notes chronologically."""
-    items = []
-    if messages_col is not None:
-        try:
-            cursor = messages_col.find(
-                {"type": {"$in": ["image", "audio"]}},
-                {"_id": 0}
-            ).sort("time_ms", 1)
-            items = await cursor.to_list(length=500)
-        except Exception:
-            pass
-    if not items:
-        items = [m for m in memory_messages if m.get("type") in ["image", "audio"]]
-        items.sort(key=lambda x: x.get("time_ms", 0))
-    return {"memories": items}
 
 # ─────────────────────────────────────────────
 # WebSocket Endpoint with Auth & State Sync
@@ -991,8 +874,7 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                 last_nudge_times[sender_key] = now
                 now_ms = get_monotonic_time_ms()
                 room.touch(username)
-                await room.broadcast({
-                    "type": "nudge",
+                await publish_event("nudge.created", username, {
                     "sender": username,
                     "timestamp": datetime.now().strftime("%H:%M"),
                     "time_ms": now_ms
@@ -1008,11 +890,7 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
             elif msg_type == "theme_change":
                 new_theme = data.get("theme", "rose")
                 await save_settings({"theme": new_theme})
-                await room.broadcast({
-                    "type": "theme_update",
-                    "theme": new_theme,
-                    "sender": username
-                })
+                await publish_event("theme.updated", username, {"theme": new_theme})
                 continue
 
             # Standard chat / photo / audio message
@@ -1058,7 +936,7 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
             # Save to MongoDB first
             await save_message(chat_item)
             room.touch(username)
-            await room.broadcast(chat_item)
+            await publish_event("message.created", username, chat_item, event_id=f"ev_msg_{chat_item['id']}")
 
     except WebSocketDisconnect:
         room.release(username)
