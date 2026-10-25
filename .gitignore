@@ -1,5 +1,12 @@
 __pycache__/
 *.pyc
 .env
+!.env.example
 .venv
 venv/
+node_modules/
+.next/
+out/
+.vercel
+dist/
+*.log
