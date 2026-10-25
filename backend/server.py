@@ -247,7 +247,7 @@ class PrivateRoom:
     async def broadcast(self, msg: dict, exclude: Optional[str] = None):
         dead = []
         for user, ws in list(self.connections.items()):
-            if exclude and user == exclude:
+            if exclude and user.strip().lower() == exclude.strip().lower():
                 continue
             try:
                 await ws.send_json(msg)
@@ -288,30 +288,28 @@ def get_current_user_from_req(request: Request) -> str:
 
     raise HTTPException(status_code=401, detail="Authentication token required or expired.")
 
-current_seq = 0
+last_seq_time_ms = int(time.time() * 1000)
 
 def get_next_seq() -> int:
-    global current_seq
-    current_seq += 1
-    if db is not None:
-        asyncio.create_task(db_persist_seq(current_seq))
-    return current_seq
-
-async def db_persist_seq(seq: int):
-    try:
-        await db["counters"].update_one(
-            {"_id": "message_seq"},
-            {"$set": {"seq": seq}},
-            upsert=True
-        )
-    except Exception:
-        pass
+    """Generate strictly monotonic sequence for every chat using time in milliseconds."""
+    global last_seq_time_ms
+    now_ms = int(time.time() * 1000)
+    if now_ms <= last_seq_time_ms:
+        last_seq_time_ms += 1
+    else:
+        last_seq_time_ms = now_ms
+    return last_seq_time_ms
 
 async def save_message(msg: dict):
     """Zero storage: kept strictly in memory for live relay between connected users."""
     global memory_messages
-    if msg.get("seq") is None:
-        msg["seq"] = get_next_seq()
+    now_ms = int(time.time() * 1000)
+    if not msg.get("time_ms"):
+        msg["time_ms"] = now_ms
+    # Sequence for every chat using time
+    msg["seq"] = get_next_seq()
+    if not msg.get("time"):
+        msg["time"] = datetime.now().strftime("%I:%M %p")
 
     if msg.get("id"):
         recent_msg_ids.add(msg["id"])
@@ -337,7 +335,7 @@ async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int]
         idx = next((i for i, m in enumerate(valid_mem) if m.get("id") == since_id), -1)
         if idx != -1:
             valid_mem = valid_mem[idx + 1:]
-    valid_mem.sort(key=lambda x: (x.get("time_ms", 0), x.get("seq", 0), x.get("id", "")))
+    valid_mem.sort(key=lambda x: (x.get("seq", 0), x.get("time_ms", 0), x.get("id", "")))
     return valid_mem
 
 async def save_settings(new_conf: dict):
@@ -850,14 +848,6 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                     })
                     if messages_col is not None:
                         asyncio.create_task(db_update_status(msg_id, status))
-                continue
-
-            elif msg_type == "typing":
-                await room.broadcast({
-                    "type": "typing",
-                    "sender": username,
-                    "is_typing": bool(data.get("is_typing", False))
-                }, exclude=username)
                 continue
 
             elif msg_type == "reaction":
