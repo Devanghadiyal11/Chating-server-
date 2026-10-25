@@ -91,9 +91,10 @@ settings_cache: Dict[str, Any] = {
     "theme": "rose"
 }
 
-# In-memory fallbacks
+# In-memory fallbacks & fast lookup caches
 memory_messages: List[dict] = []
 memory_events: List[dict] = []
+recent_msg_ids: set = set()
 
 def get_monotonic_time_ms() -> int:
     global last_monotonic_ms
@@ -165,6 +166,29 @@ async def lifespan(app: FastAPI):
         stored_conf = await settings_col.find_one({"_id": "couple_settings"}, {"_id": 0})
         if stored_conf:
             settings_cache.update(stored_conf)
+
+        # Initialize atomic in-memory sequence counter from DB
+        try:
+            cnt_doc = await db["counters"].find_one({"_id": "message_seq"})
+            if cnt_doc and "seq" in cnt_doc:
+                current_seq = cnt_doc["seq"]
+            else:
+                last_ev = await events_col.find_one(sort=[("seq", -1)])
+                if last_ev and "seq" in last_ev:
+                    current_seq = last_ev["seq"]
+        except Exception as e:
+            print(f"[Counter Init Warning] {e}")
+
+        # Pre-populate recent message IDs into memory cache for instant deduplication
+        try:
+            recent_cursor = messages_col.find({}, {"id": 1, "clientMessageId": 1}).sort("time_ms", -1).limit(500)
+            async for r_doc in recent_cursor:
+                if "id" in r_doc:
+                    recent_msg_ids.add(r_doc["id"])
+                if "clientMessageId" in r_doc:
+                    recent_msg_ids.add(r_doc["clientMessageId"])
+        except Exception:
+            pass
 
         # Load sessions from DB
         async for s in sessions_col.find({}):
@@ -258,40 +282,50 @@ def get_current_user_from_req(request: Request) -> str:
 
 current_seq = 0
 
-async def get_next_seq() -> int:
+def get_next_seq() -> int:
     global current_seq
-    if db is not None:
-        try:
-            res = await db["counters"].find_one_and_update(
-                {"_id": "message_seq"},
-                {"$inc": {"seq": 1}},
-                upsert=True,
-                return_document=motor.motor_asyncio.ReturnDocument.AFTER
-            )
-            if res and "seq" in res:
-                current_seq = max(current_seq, res["seq"])
-                return res["seq"]
-        except Exception as e:
-            print(f"[Counter DB Error] {e}")
     current_seq += 1
+    if db is not None:
+        asyncio.create_task(db_persist_seq(current_seq))
     return current_seq
 
+async def db_persist_seq(seq: int):
+    try:
+        await db["counters"].update_one(
+            {"_id": "message_seq"},
+            {"$set": {"seq": seq}},
+            upsert=True
+        )
+    except Exception:
+        pass
+
 async def save_message(msg: dict):
-    """Save to MongoDB FIRST before confirmation, allocating atomic sequence number."""
+    """Allocates sequence and stores in memory immediately, persists to MongoDB asynchronously."""
     global memory_messages
     if msg.get("seq") is None:
-        msg["seq"] = await get_next_seq()
+        msg["seq"] = get_next_seq()
+
+    if msg.get("id"):
+        recent_msg_ids.add(msg["id"])
+    if msg.get("clientMessageId"):
+        recent_msg_ids.add(msg["clientMessageId"])
+    if len(recent_msg_ids) > 4000:
+        recent_msg_ids.clear()
 
     memory_messages.append(msg)
     if len(memory_messages) > 1200:
         memory_messages.pop(0)
 
+    # Persist to MongoDB concurrently in background task without blocking live broadcast!
     if messages_col is not None:
-        try:
-            doc = {k: v for k, v in msg.items()}
-            await messages_col.update_one({"id": msg["id"]}, {"$set": doc}, upsert=True)
-        except Exception as e:
-            print(f"[DB Error] Error saving message {msg.get('id')}: {e}")
+        asyncio.create_task(db_save_message(msg))
+
+async def db_save_message(msg: dict):
+    try:
+        doc = {k: v for k, v in msg.items()}
+        await messages_col.update_one({"id": msg["id"]}, {"$set": doc}, upsert=True)
+    except Exception as e:
+        print(f"[DB Error] Error saving message {msg.get('id')}: {e}")
 
 async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int] = None) -> List[dict]:
     """Load messages sorted strictly by seq and (time_ms, id) ascending."""
@@ -342,14 +376,17 @@ async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int]
 async def save_settings(new_conf: dict):
     settings_cache.update(new_conf)
     if settings_col is not None:
-        try:
-            await settings_col.update_one(
-                {"_id": "couple_settings"},
-                {"$set": settings_cache},
-                upsert=True
-            )
-        except Exception as e:
-            print(f"[DB Error] Saving settings: {e}")
+        asyncio.create_task(db_save_settings(settings_cache))
+
+async def db_save_settings(conf: dict):
+    try:
+        await settings_col.update_one(
+            {"_id": "couple_settings"},
+            {"$set": conf},
+            upsert=True
+        )
+    except Exception as e:
+        print(f"[DB Error] Saving settings: {e}")
 
 async def publish_event(
     event_type: str,
@@ -357,10 +394,10 @@ async def publish_event(
     payload: dict,
     event_id: Optional[str] = None
 ) -> dict:
-    """Unified Event Pipeline: Save to MongoDB first, assign atomic sequence, broadcast once."""
-    seq = await get_next_seq()
+    """Unified Event Pipeline: Broadcast immediately to WebSocket, persist to DB in background."""
+    seq = payload.get("seq") if isinstance(payload, dict) and payload.get("seq") else get_next_seq()
     now_ms = get_monotonic_time_ms()
-    ev_id = event_id or f"ev_{int(time.time()*1000)}_{secrets.token_hex(4)}"
+    ev_id = event_id or f"ev_{now_ms}_{secrets.token_hex(4)}"
 
     event_doc = {
         "eventId": ev_id,
@@ -372,25 +409,18 @@ async def publish_event(
         "createdAt": now_ms
     }
 
-    # 1. Save to MongoDB events collection first (Save First)
-    if events_col is not None:
-        try:
-            await events_col.insert_one(event_doc.copy())
-        except Exception as e:
-            print(f"[Event Save Error] {e}")
-
     memory_events.append(event_doc)
     if len(memory_events) > 2000:
         memory_events.pop(0)
 
-    # 2. Broadcast unified event envelope over WebSocket (Broadcast Second)
+    # 1. IMMEDIATE WebSocket broadcast (0ms wait!)
     envelope = {
         "type": "event",
         "event": event_doc
     }
     await room.broadcast(envelope)
 
-    # 3. Backward-compatible legacy event broadcasts
+    # 2. Backward-compatible legacy event broadcasts
     if event_type == "message.created":
         await room.broadcast(payload)
     elif event_type == "nudge.created":
@@ -429,7 +459,17 @@ async def publish_event(
             "id": f"m_{int(time.time()*1000)}_clear"
         })
 
+    # 3. Asynchronously persist to MongoDB in background
+    if events_col is not None:
+        asyncio.create_task(db_save_event(event_doc))
+
     return event_doc
+
+async def db_save_event(event_doc: dict):
+    try:
+        await events_col.insert_one(event_doc.copy())
+    except Exception as e:
+        print(f"[Event DB Save Error] {e}")
 
 # ─────────────────────────────────────────────
 # Pydantic Models
@@ -468,23 +508,16 @@ class SettingsPayload(BaseModel):
 # REST API: Authentication & Sessions
 # ─────────────────────────────────────────────
 
-async def find_existing_message(msg_id: Optional[str], client_id: Optional[str]) -> Optional[dict]:
+def find_existing_message(msg_id: Optional[str], client_id: Optional[str]) -> Optional[dict]:
     ids = [x for x in [msg_id, client_id] if x]
     if not ids:
         return None
-    if messages_col is not None:
-        try:
-            found = await messages_col.find_one(
-                {"$or": [{"id": {"$in": ids}}, {"clientMessageId": {"$in": ids}}, {"client_message_id": {"$in": ids}}]},
-                {"_id": 0}
-            )
-            if found:
-                return found
-        except Exception:
-            pass
     for m in memory_messages:
-        if m.get("id") in ids or m.get("clientMessageId") in ids or m.get("client_message_id") in ids:
+        if m.get("id") in ids or m.get("clientMessageId") in ids:
             return m
+    for i in ids:
+        if i in recent_msg_ids:
+            return {"id": i, "duplicate": True}
     return None
 
 @app.post("/api/join")
@@ -550,11 +583,11 @@ async def get_messages(since_id: Optional[str] = None, after_seq: Optional[int] 
 @app.post("/api/send")
 async def send_message(msg: ChatPayload, request: Request):
     client_ip = request.client.host if request.client else "unknown"
-    if not check_rate_limit(f"send_{client_ip}", max_calls=30, period=10.0):
+    if not check_rate_limit(f"send_{client_ip}", max_calls=60, period=10.0):
         raise HTTPException(status_code=429, detail="Rate limit exceeded.")
 
-    # Idempotency deduplication check
-    existing = await find_existing_message(msg.msg_id, msg.clientMessageId)
+    # Instant in-memory deduplication check (0.001ms)
+    existing = find_existing_message(msg.msg_id, msg.clientMessageId)
     if existing:
         return {"status": "ok", "message": existing, "duplicate": True}
 
@@ -592,7 +625,7 @@ async def send_message(msg: ChatPayload, request: Request):
         "reactions": {}
     }
 
-    # Save to MongoDB FIRST before confirming
+    # Store in memory & broadcast immediately without WAN wait
     await save_message(chat_item)
     room.touch(msg.sender)
     await publish_event("message.created", msg.sender, chat_item, event_id=f"ev_msg_{chat_item['id']}")
@@ -600,15 +633,13 @@ async def send_message(msg: ChatPayload, request: Request):
 
 @app.post("/api/ack")
 async def acknowledge_delivery(req: Request):
-    """Mark a message as delivered or read."""
+    """Mark a message as delivered or read with instant broadcast."""
     data = await req.json()
     msg_id = data.get("msg_id")
     status = data.get("status", "delivered")
     if not msg_id:
         return {"status": "ignored"}
 
-    if messages_col is not None:
-        await messages_col.update_one({"id": msg_id}, {"$set": {"status": status}})
     for m in memory_messages:
         if m.get("id") == msg_id:
             m["status"] = status
@@ -618,7 +649,17 @@ async def acknowledge_delivery(req: Request):
         "msg_id": msg_id,
         "status": status
     })
+
+    if messages_col is not None:
+        asyncio.create_task(db_update_status(msg_id, status))
+
     return {"status": "ok"}
+
+async def db_update_status(msg_id: str, status: str):
+    try:
+        await messages_col.update_one({"id": msg_id}, {"$set": {"status": status}})
+    except Exception as e:
+        print(f"[DB Error] Status update: {e}")
 
 @app.post("/api/reaction")
 async def toggle_reaction(req: ReactionPayload):
@@ -626,11 +667,9 @@ async def toggle_reaction(req: ReactionPayload):
     emoji = req.emoji
     sender = req.sender
 
-    msg = None
-    if messages_col is not None:
+    msg = next((m for m in memory_messages if m.get("id") == msg_id), None)
+    if not msg and messages_col is not None:
         msg = await messages_col.find_one({"id": msg_id})
-    if not msg:
-        msg = next((m for m in memory_messages if m.get("id") == msg_id), None)
 
     if not msg:
         raise HTTPException(status_code=404, detail="Message not found")
@@ -648,8 +687,7 @@ async def toggle_reaction(req: ReactionPayload):
         user_list.append(sender)
         reactions[emoji] = user_list
 
-    if messages_col is not None:
-        await messages_col.update_one({"id": msg_id}, {"$set": {"reactions": reactions}})
+    msg["reactions"] = reactions
     for m in memory_messages:
         if m.get("id") == msg_id:
             m["reactions"] = reactions
@@ -661,7 +699,17 @@ async def toggle_reaction(req: ReactionPayload):
         "emoji": emoji
     }
     await publish_event("reaction.updated", sender, payload)
+
+    if messages_col is not None:
+        asyncio.create_task(db_update_reactions(msg_id, reactions))
+
     return {"status": "ok", "reactions": reactions}
+
+async def db_update_reactions(msg_id: str, reactions: dict):
+    try:
+        await messages_col.update_one({"id": msg_id}, {"$set": {"reactions": reactions}})
+    except Exception as e:
+        print(f"[DB Error] Reactions update: {e}")
 
 @app.post("/api/nudge")
 async def send_nudge(req: NudgePayload):
@@ -838,8 +886,6 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                 msg_id = data.get("msg_id")
                 status = data.get("status", "delivered")
                 if msg_id:
-                    if messages_col is not None:
-                        await messages_col.update_one({"id": msg_id}, {"$set": {"status": status}})
                     for m in memory_messages:
                         if m.get("id") == msg_id:
                             m["status"] = status
@@ -848,6 +894,8 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                         "msg_id": msg_id,
                         "status": status
                     })
+                    if messages_col is not None:
+                        asyncio.create_task(db_update_status(msg_id, status))
                 continue
 
             elif msg_type == "typing":
@@ -897,7 +945,7 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
             message_id = data.get("msg_id") or data.get("clientMessageId") or f"m_{int(time.time()*1000)}_{random.randint(100, 999)}"
             client_msg_id = data.get("clientMessageId") or message_id
 
-            existing = await find_existing_message(message_id, client_msg_id)
+            existing = find_existing_message(message_id, client_msg_id)
             if existing:
                 continue
 
