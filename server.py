@@ -1,8 +1,16 @@
+"""
+Private Chat Server — 2-Person Only
+PIN: 1012 (hardcoded, always alive)
+Storage: MongoDB (persistent — chats survive server restarts)
+"""
+
 import asyncio
 import random
 import time
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
+
+import motor.motor_asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -10,182 +18,177 @@ from pydantic import BaseModel
 import uvicorn
 import os
 
-app = FastAPI(title="Chating room Server - Stable Edition")
+# ─────────────────────────────────────────────
+# App & Config
+# ─────────────────────────────────────────────
 
-# --- Room & Connection Management ---
+PRIVATE_PIN = "1012"
+MAX_USERS   = 2  # Only 2 people allowed
 
-class Room:
-    def __init__(self, room_id: str, room_name: str, pin: str, host: str = "Admin"):
-        self.room_id = room_id  # Pin acts as room_id
-        self.pin = pin
-        self.room_name = room_name
-        self.host = host
-        self.connections: Dict[str, WebSocket] = {}
-        self.active_users: Dict[str, float] = {}  # username -> last seen timestamp
-        self.messages: List[Dict] = []
-        self.created_at = time.time()
-        if host:
-            self.active_users[host] = time.time()
+MONGO_URI = "mongodb+srv://devanghadiyal:dev%40ng%7B8954%7D@cluster0.owtzs.mongodb.net/Chatserver"
+DB_NAME   = "Chatserver"
+COL_NAME  = "messages"
 
-    def touch_user(self, username: str):
-        if username and username.strip():
-            self.active_users[username.strip()] = time.time()
+app = FastAPI(title="Private Chat — 1012")
+
+# ─────────────────────────────────────────────
+# MongoDB connection
+# ─────────────────────────────────────────────
+
+mongo_client: Optional[motor.motor_asyncio.AsyncIOMotorClient] = None
+db = None
+messages_col = None
+
+@app.on_event("startup")
+async def startup_db():
+    global mongo_client, db, messages_col
+    mongo_client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
+    db = mongo_client[DB_NAME]
+    messages_col = db[COL_NAME]
+    # Ensure index for fast chronological queries
+    await messages_col.create_index("time_ms")
+    print(f"[DB] Connected to MongoDB — {DB_NAME}.{COL_NAME}")
+
+@app.on_event("shutdown")
+async def shutdown_db():
+    if mongo_client:
+        mongo_client.close()
+
+# ─────────────────────────────────────────────
+# In-memory room state (connections only)
+# ─────────────────────────────────────────────
+
+class PrivateRoom:
+    """The one and only private room — PIN 1012. Always alive."""
+
+    def __init__(self):
+        self.connections: Dict[str, WebSocket] = {}   # username -> ws
+        self.active_users: Dict[str, float] = {}       # username -> last_seen
+        self.pin = PRIVATE_PIN
 
     def get_online_users(self) -> List[str]:
         now = time.time()
-        online = set()
-        # Active in last 25 seconds via HTTP or polling
-        for u, last_seen in list(self.active_users.items()):
-            if now - last_seen < 25:
+        online = set(self.connections.keys())
+        for u, last in list(self.active_users.items()):
+            if now - last < 30:
                 online.add(u)
-        # Active via WebSocket
-        for u in self.connections.keys():
-            online.add(u)
         return sorted(list(online))
 
-    async def broadcast(self, message: dict):
-        """Safely broadcast to all active connections, cleaning dead sockets"""
-        dead_users = []
-        for username, ws in list(self.connections.items()):
-            try:
-                await ws.send_json(message)
-            except Exception:
-                dead_users.append(username)
+    def touch(self, username: str):
+        if username and username.strip():
+            self.active_users[username.strip()] = time.time()
 
-        for u in dead_users:
-            if u in self.connections:
-                del self.connections[u]
+    async def broadcast(self, msg: dict):
+        dead = []
+        for user, ws in list(self.connections.items()):
+            try:
+                await ws.send_json(msg)
+            except Exception:
+                dead.append(user)
+        for u in dead:
+            self.connections.pop(u, None)
 
     async def broadcast_users(self):
-        msg = {
+        await self.broadcast({
             "type": "users_update",
-            "users": self.get_online_users(),
-            "host": self.host
-        }
-        await self.broadcast(msg)
+            "users": self.get_online_users()
+        })
 
-class RoomManager:
-    def __init__(self):
-        self.rooms: Dict[str, Room] = {}
-        # Default public lobby room
-        self.rooms["general"] = Room("general", "General Public Chat", "0000", host="System")
 
-    def generate_pin(self) -> str:
-        """Generate unique 4-digit PIN (1000 to 9999)"""
-        for _ in range(10000):
-            pin = f"{random.randint(1000, 9999)}"
-            if pin not in self.rooms:
-                return pin
-        return f"{random.randint(10000, 99999)}"
+room = PrivateRoom()
 
-    def get_room(self, room_id: str) -> Optional[Room]:
-        return self.rooms.get(room_id.strip())
+# ─────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────
 
-    def get_or_create(self, pin: str, name: str = "", host: str = "Host") -> Room:
-        clean_pin = pin.strip()
-        if clean_pin not in self.rooms:
-            self.rooms[clean_pin] = Room(room_id=clean_pin, room_name=name or f"Room #{clean_pin}", pin=clean_pin, host=host)
-        return self.rooms[clean_pin]
+def new_msg_id() -> str:
+    return f"m_{int(time.time()*1000)}_{random.randint(100, 999)}"
 
-    def delete_room(self, room_id: str):
-        if room_id in self.rooms and room_id != "general":
-            del self.rooms[room_id]
+async def save_message(msg: dict):
+    """Persist message to MongoDB (strip WebSocket-only fields if any)."""
+    if messages_col is None:
+        return
+    doc = {k: v for k, v in msg.items()}
+    await messages_col.insert_one(doc)
 
-manager = RoomManager()
+async def load_messages(since_id: Optional[str] = None) -> List[dict]:
+    """Load all messages (or messages after since_id) from MongoDB."""
+    if messages_col is None:
+        return []
 
-# --- Pydantic Models ---
+    query = {}
+    if since_id:
+        # Find the time_ms of the since_id message, then return everything after
+        anchor = await messages_col.find_one({"id": since_id}, {"time_ms": 1})
+        if anchor:
+            query = {"time_ms": {"$gt": anchor["time_ms"]}}
 
-class CreateRoomRequest(BaseModel):
-    room_name: Optional[str] = "Private Chat"
-    creator: Optional[str] = "Host"
-    custom_pin: Optional[str] = None
+    cursor = messages_col.find(query, {"_id": 0}).sort("time_ms", 1)
+    return await cursor.to_list(length=5000)
 
-class JoinRoomRequest(BaseModel):
+# ─────────────────────────────────────────────
+# Pydantic models
+# ─────────────────────────────────────────────
+
+class JoinRequest(BaseModel):
     pin: str
     username: str
 
-class ChatMessagePayload(BaseModel):
+class ChatPayload(BaseModel):
     sender: str
     content: Optional[str] = ""
-    image: Optional[str] = None  # Base64 data URL for photos
+    image: Optional[str] = None
     msg_id: Optional[str] = None
 
-# --- REST Endpoints ---
+# ─────────────────────────────────────────────
+# REST Endpoints
+# ─────────────────────────────────────────────
 
-@app.post("/api/rooms/create")
-async def create_room(req: CreateRoomRequest):
-    if req.custom_pin and req.custom_pin.strip():
-        pin = req.custom_pin.strip()
-    else:
-        pin = manager.generate_pin()
-
-    creator_name = req.creator.strip() if req.creator else "Host"
-    name = req.room_name.strip() if req.room_name else f"Room #{pin}"
-    room = Room(room_id=pin, room_name=name, pin=pin, host=creator_name)
-    manager.rooms[pin] = room
-
-    return {
-        "status": "created",
-        "pin": pin,
-        "room_name": name,
-        "host": creator_name,
-        "message": f"Room created successfully! Share PIN: {pin}"
-    }
-
-@app.post("/api/rooms/join")
-async def join_room(req: JoinRoomRequest):
+@app.post("/api/join")
+async def join_room(req: JoinRequest):
     pin = req.pin.strip()
-    if not (pin.isdigit() and len(pin) == 4):
-        raise HTTPException(status_code=400, detail="Invalid PIN format. Room PIN must be a 4-digit numeric code.")
-    room = manager.get_or_create(pin)
-    room.touch_user(req.username)
+    if pin != PRIVATE_PIN:
+        raise HTTPException(status_code=401, detail="Invalid PIN. Access denied.")
 
+    username = req.username.strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required.")
+
+    online = room.get_online_users()
+    # Allow re-join of existing user; block a 3rd new user
+    if len(online) >= MAX_USERS and username not in online:
+        raise HTTPException(
+            status_code=403,
+            detail="This private chat is full (2 people max). Come back later."
+        )
+
+    room.touch(username)
     return {
         "status": "authorized",
-        "pin": room.pin,
-        "room_name": room.room_name,
-        "host": room.host,
-        "username": req.username
+        "pin": PRIVATE_PIN,
+        "username": username,
+        "room_name": "💑 Private Chat"
     }
 
-@app.get("/api/rooms/{pin}/users")
-async def get_room_users(pin: str, username: Optional[str] = None):
-    """Returns the list of active users in this room (both HTTP and WebSocket)"""
-    room = manager.get_or_create(pin)
+
+@app.get("/api/users")
+async def get_users(username: Optional[str] = None):
     if username:
-        room.touch_user(username)
-    users = room.get_online_users()
-    return {
-        "pin": room.pin,
-        "users": users,
-        "host": room.host,
-        "count": len(users)
-    }
+        room.touch(username)
+    return {"users": room.get_online_users()}
 
-@app.get("/api/rooms/{pin}/messages")
-async def get_room_messages(pin: str, since_id: Optional[str] = None, username: Optional[str] = None):
-    room = manager.get_or_create(pin)
+
+@app.get("/api/messages")
+async def get_messages(since_id: Optional[str] = None, username: Optional[str] = None):
     if username:
-        room.touch_user(username)
-    
-    # If since_id provided, return only new messages for fast sync
-    if since_id:
-        idx = -1
-        for i, m in enumerate(room.messages):
-            if m.get("id") == since_id:
-                idx = i
-                break
-        if idx != -1:
-            return {"pin": room.pin, "room_name": room.room_name, "host": room.host, "messages": room.messages[idx+1:]}
+        room.touch(username)
+    msgs = await load_messages(since_id)
+    return {"messages": msgs}
 
-    return {"pin": room.pin, "room_name": room.room_name, "host": room.host, "messages": room.messages}
 
-@app.post("/api/rooms/{pin}/send")
-async def send_room_message(pin: str, msg: ChatMessagePayload, request: Request):
-    room = manager.get_or_create(pin)
-    room.touch_user(msg.sender)
-
-    message_id = msg.msg_id or f"m_{int(time.time()*1000)}_{random.randint(100, 999)}"
+@app.post("/api/send")
+async def send_message(msg: ChatPayload, request: Request):
+    message_id = msg.msg_id or new_msg_id()
     now_ms = int(time.time() * 1000)
     chat_item = {
         "id": message_id,
@@ -193,91 +196,52 @@ async def send_room_message(pin: str, msg: ChatMessagePayload, request: Request)
         "sender": msg.sender,
         "content": msg.content or "",
         "image": msg.image,
-        "timestamp": datetime.now().strftime("%H:%M:%S"),
+        "timestamp": datetime.now().strftime("%H:%M"),
         "time_ms": now_ms,
-        "client_ip": request.client.host if request.client else "unknown"
     }
-    room.messages.append(chat_item)
+    await save_message(chat_item)
+    room.touch(msg.sender)
     await room.broadcast(chat_item)
-    return {"status": "success", "message": chat_item}
+    return {"status": "ok", "message": chat_item}
 
-@app.post("/api/rooms/{pin}/close")
-async def close_room_immediately(pin: str, msg: ChatMessagePayload):
-    """Explicitly delete room when host clicks 'Delete Room'"""
-    room = manager.get_room(pin)
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
 
-    closed_event = {
-        "type": "room_closed",
-        "content": f"The Host ({msg.sender}) has closed and deleted this room.",
-        "timestamp": datetime.now().strftime("%H:%M:%S")
-    }
-    await room.broadcast(closed_event)
-    for client_user, ws in list(room.connections.items()):
-        try:
-            await ws.close(code=1000)
-        except Exception:
-            pass
-    manager.delete_room(pin)
-    return {"status": "closed"}
-
-@app.delete("/api/rooms/{pin}/messages")
-async def clear_room_messages(pin: str):
-    room = manager.get_room(pin)
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
-
-    room.messages.clear()
-    clear_msg = {
+@app.delete("/api/messages")
+async def clear_messages():
+    if messages_col is not None:
+        await messages_col.delete_many({})
+    clear_event = {
         "type": "system",
         "sender": "System",
-        "content": "Chat history was cleared.",
-        "timestamp": datetime.now().strftime("%H:%M:%S")
+        "content": "Chat history cleared. 🗑️",
+        "timestamp": datetime.now().strftime("%H:%M"),
+        "time_ms": int(time.time() * 1000),
+        "id": new_msg_id()
     }
-    await room.broadcast(clear_msg)
+    await room.broadcast(clear_event)
     return {"status": "cleared"}
 
-# Legacy endpoints
-@app.get("/api/messages")
-async def legacy_get_messages():
-    return await get_room_messages("general")
+# ─────────────────────────────────────────────
+# WebSocket
+# ─────────────────────────────────────────────
 
-@app.post("/api/send")
-async def legacy_send_message(msg: ChatMessagePayload, request: Request):
-    return await send_room_message("general", msg, request)
+@app.websocket("/ws/{username}")
+async def websocket_endpoint(websocket: WebSocket, username: str):
+    username = username.strip()
 
-@app.get("/api/users")
-async def legacy_get_users():
-    room = manager.get_room("general")
-    return {"active_users": list(room.connections.keys()) if room else []}
-
-# --- WebSocket Room Endpoint (Robust & Reconnection-Safe) ---
-
-@app.websocket("/ws/{pin}/{username}")
-async def websocket_room_endpoint(websocket: WebSocket, pin: str, username: str):
-    clean_pin = pin.strip()
-    room = manager.get_room(clean_pin)
-
-    if not room:
+    online = room.get_online_users()
+    if len(online) >= MAX_USERS and username not in online:
         await websocket.accept()
-        await websocket.send_json({"type": "error", "content": f"Room with PIN {clean_pin} not found."})
-        await websocket.close(code=4004)
+        await websocket.send_json({
+            "type": "error",
+            "content": "This private chat is full. Only 2 people allowed."
+        })
+        await websocket.close(code=4003)
         return
 
     await websocket.accept()
-    # If connection was already open for this username, replace it safely
     room.connections[username] = websocket
+    room.touch(username)
 
-    is_host = (username == room.host)
-    join_msg = {
-        "id": f"sys_{int(time.time()*1000)}",
-        "type": "system",
-        "sender": "System",
-        "content": f"{username} {'(Host)' if is_host else ''} connected.",
-        "timestamp": datetime.now().strftime("%H:%M:%S")
-    }
-    # Broadcast user status
     await room.broadcast_users()
 
     try:
@@ -285,40 +249,39 @@ async def websocket_room_endpoint(websocket: WebSocket, pin: str, username: str)
             data = await websocket.receive_json()
             msg_type = data.get("type", "chat")
 
-            # Heartbeat ping/pong (prevents timeouts on proxies/routers)
             if msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
                 continue
 
-            message_id = data.get("msg_id") or f"m_{int(time.time()*1000)}_{random.randint(100, 999)}"
+            message_id = data.get("msg_id") or new_msg_id()
+            now_ms = int(time.time() * 1000)
             chat_item = {
                 "id": message_id,
                 "type": "image" if data.get("image") else "chat",
                 "sender": data.get("sender", username),
                 "content": data.get("content", ""),
                 "image": data.get("image"),
-                "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "time_ms": int(time.time() * 1000)
+                "timestamp": datetime.now().strftime("%H:%M"),
+                "time_ms": now_ms
             }
-            room.messages.append(chat_item)
+            await save_message(chat_item)
+            room.touch(username)
             await room.broadcast(chat_item)
-    except WebSocketDisconnect:
-        # Safely remove this connection
-        if username in room.connections and room.connections[username] == websocket:
-            del room.connections[username]
 
-        # Stable Room Policy: Room stays ALIVE!
-        # Even if someone switches tabs, minimizes their phone, or disconnects,
-        # the room persists so they can smoothly reconnect without losing the chat.
+    except WebSocketDisconnect:
+        room.connections.pop(username, None)
         await room.broadcast_users()
     except Exception:
-        if username in room.connections and room.connections[username] == websocket:
-            del room.connections[username]
+        room.connections.pop(username, None)
 
-# --- Static UI ---
+# ─────────────────────────────────────────────
+# Static files & Index
+# ─────────────────────────────────────────────
+
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
 
 @app.get("/", response_class=HTMLResponse)
 async def get_index():
@@ -326,12 +289,18 @@ async def get_index():
     if os.path.exists(index_file):
         with open(index_file, "r", encoding="utf-8") as f:
             return f.read()
-    return "<h1>Server is running. Web UI not found.</h1>"
+    return "<h1>Server running. UI not found.</h1>"
+
+
+# ─────────────────────────────────────────────
+# Entry point
+# ─────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("==================================================================")
-    print("  Chating room Server (High-Stability Edition)")
-    print("  Local access:    http://127.0.0.1:8000")
-    print("  Network access:  http://0.0.0.0:8000")
-    print("==================================================================")
+    print("=" * 60)
+    print("  💑 Private Chat Server")
+    print(f"  PIN: {PRIVATE_PIN}  |  Max users: {MAX_USERS}")
+    print("  Local:   http://127.0.0.1:8000")
+    print("  Network: http://0.0.0.0:8000")
+    print("=" * 60)
     uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=False)
