@@ -30,6 +30,7 @@ from typing import Dict, List, Optional, Any
 
 import motor.motor_asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -183,6 +184,15 @@ async def lifespan(app: FastAPI):
         mongo_client.close()
 
 app = FastAPI(title="Our Sweet Space 💕 - Couple Server", lifespan=lifespan)
+
+# Allow CORS for Next.js on Vercel or local development
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ─────────────────────────────────────────────
 # Room & Presence Hub
