@@ -266,8 +266,8 @@ async def join_room(req: JoinRequest):
     if not username:
         raise HTTPException(status_code=400, detail="Username is required.")
 
-    online = room.get_online_users()
-    if len(online) >= MAX_USERS and username not in online:
+    current_users_lower = [u.lower() for u in room.connections.keys()]
+    if len(room.connections) >= MAX_USERS and username.lower() not in current_users_lower:
         raise HTTPException(
             status_code=403,
             detail="This private room is full (2 people max). Come back later."
@@ -466,13 +466,24 @@ async def clear_messages():
 @app.websocket("/ws/{username}")
 async def websocket_endpoint(websocket: WebSocket, username: str):
     username = username.strip()
+    user_lower = username.lower()
 
-    online = room.get_online_users()
-    if len(online) >= MAX_USERS and username not in online:
+    # Close any existing stale connection for this exact user upon reconnect
+    for existing_user in list(room.connections.keys()):
+        if existing_user.lower() == user_lower:
+            old_ws = room.connections.pop(existing_user, None)
+            if old_ws:
+                try:
+                    await old_ws.close()
+                except Exception:
+                    pass
+
+    current_users_lower = [u.lower() for u in room.connections.keys()]
+    if len(room.connections) >= MAX_USERS and user_lower not in current_users_lower:
         await websocket.accept()
         await websocket.send_json({
             "type": "error",
-            "content": "This private chat is full. Only 2 people allowed."
+            "content": "This private chat is full (2 people max)."
         })
         await websocket.close(code=4003)
         return

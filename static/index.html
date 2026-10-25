@@ -1918,12 +1918,21 @@
 
   async function sendAudioPayload(audioBase64, duration) {
     const msgId = "m_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+    const nowMs = Date.now();
     const payload = {
+      id: msgId,
       msg_id: msgId,
       sender: currentUser,
       audio: audioBase64,
-      audio_duration: parseFloat(duration)
+      audio_duration: parseFloat(duration),
+      type: "audio",
+      timestamp: formatTime(nowMs),
+      time_ms: nowMs,
+      reactions: {}
     };
+
+    // Optimistically render immediately without waiting for server or reload!
+    appendMsg(payload);
 
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(payload));
@@ -1939,9 +1948,11 @@
   // ── Render Messages ───────────────────────────
   function appendMsg(msg) {
     if (!msg) return;
-    if (msg.id) {
-      if (renderedIds.has(msg.id)) return;
-      renderedIds.add(msg.id);
+    const msgId = msg.id || msg.msg_id;
+    if (msgId) {
+      if (renderedIds.has(msgId)) return;
+      renderedIds.add(msgId);
+      msg.id = msgId;
     }
 
     const area = document.getElementById("messagesArea");
@@ -2204,32 +2215,38 @@
     if (!currentUser) return;
 
     const msgId = "m_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+    const nowMs = Date.now();
     const payload = {
+      id: msgId,
       msg_id: msgId,
       sender: currentUser,
       content,
-      image: stagedPhoto || null
+      image: stagedPhoto || null,
+      type: stagedPhoto ? "image" : "chat",
+      timestamp: formatTime(nowMs),
+      time_ms: nowMs,
+      reactions: {}
     };
+
+    // 1. Optimistically render message immediately on screen (0 ms latency, no reload needed!)
+    appendMsg(payload);
 
     input.value = "";
     const base = window.innerWidth <= 780 ? 40 : 44;
     input.style.height = base + "px";
     clearStaging();
 
+    // 2. Deliver via WebSocket or fallback to HTTP REST
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(payload));
     } else {
       try {
-        const res = await fetch("/api/send", {
+        await fetch("/api/send", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
         });
-        if (res.ok) {
-          const d = await res.json();
-          if (d.message) appendMsg(d.message);
-        }
-      } catch(e) { console.error(e); }
+      } catch(e) { console.error("HTTP send fallback error:", e); }
     }
   }
 
@@ -2248,6 +2265,36 @@
       }
     } catch(e) {}
   }
+
+  // ── Auto-Sync & Real-Time Polling Fallback ─────
+  // Runs every 1.8s to guarantee both devices receive messages immediately even if WebSockets drop or sleep
+  setInterval(() => {
+    if (currentUser && document.getElementById("loginOverlay").style.display === "none") {
+      loadHistory();
+      loadUsers();
+    }
+  }, 1800);
+
+  // When phone is unlocked or tab is focused, sync immediately!
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && currentUser) {
+      loadHistory();
+      loadUsers();
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        connectWS();
+      }
+    }
+  });
+
+  window.addEventListener("focus", () => {
+    if (currentUser) {
+      loadHistory();
+      loadUsers();
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        connectWS();
+      }
+    }
+  });
 
   // ── Photo Handling & Lightbox ─────────────────
   function onPhotoSelected(e) {
