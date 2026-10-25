@@ -1,0 +1,17 @@
+{
+  "name": "Our Sweet Space 💕",
+  "short_name": "SweetSpace",
+  "description": "Private romantic couple messaging space exclusively for two.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0c0a10",
+  "theme_color": "#e11d48",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

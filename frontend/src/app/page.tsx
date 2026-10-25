@@ -9,7 +9,13 @@ import {
   OpenWhenLetter,
   ThemeType,
   MemoryItem,
+  PendingMessage,
 } from "@/lib/types";
+import {
+  savePendingMessage,
+  getPendingMessages,
+  removePendingMessage,
+} from "@/lib/indexedDb";
 import { playMessageChime, playLoveNudgeChime, burstHearts } from "@/lib/audio";
 import { Header } from "@/components/Header";
 import { QuickBar } from "@/components/QuickBar";
@@ -73,10 +79,24 @@ export default function ChatPage() {
   // Stealth Disguise
   const [isStealth, setIsStealth] = useState(false);
 
-  // Outgoing Offline Queue
-  const outgoingQueue = useRef<ChatMessage[]>([]);
+  // Connection & Offline Queue
+  const [connectionStatus, setConnectionStatus] = useState<"connected" | "reconnecting" | "offline">("reconnecting");
+  const [pendingCount, setPendingCount] = useState(0);
+
+  // Reply Target State
+  const [replyTarget, setReplyTarget] = useState<ChatMessage | null>(null);
+
   const wsRef = useRef<WebSocket | null>(null);
   const lastSeenIdRef = useRef<string | null>(null);
+  const maxSeqRef = useRef<number>(0);
+
+  // Refresh pending items count from IndexedDB
+  const refreshPendingCount = useCallback(async () => {
+    try {
+      const items = await getPendingMessages();
+      setPendingCount(items.length);
+    } catch {}
+  }, []);
 
   // Calculate days together
   const calcDays = useCallback((dateStr: string) => {
@@ -94,9 +114,11 @@ export default function ChatPage() {
     }
   };
 
-  // Initial Load from localStorage
+  // Initial Load from localStorage & Offline Queue check
   useEffect(() => {
     setMounted(true);
+    refreshPendingCount();
+
     const savedUser = localStorage.getItem("couple_user");
     const savedToken = localStorage.getItem("couple_token");
     const savedAv = localStorage.getItem("couple_avatar") || "🐻";
@@ -110,7 +132,16 @@ export default function ChatPage() {
       setCurrentAvatar(savedAv);
       setIsLoggedIn(true);
     }
-  }, []);
+
+    const onOnline = () => setConnectionStatus("reconnecting");
+    const onOffline = () => setConnectionStatus("offline");
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, [refreshPendingCount]);
 
   // Keyboard shortcut for Panic/Stealth mode
   useEffect(() => {
@@ -134,12 +165,16 @@ export default function ChatPage() {
     }
   }, [sessionToken]);
 
-  // Load chat history & missed messages
+  // Load chat history & missed messages using strict monotonic sequence or since_id
   const loadHistory = useCallback(async () => {
     if (!currentUser) return;
     try {
       let url = `${API_BASE}/api/messages?username=${encodeURIComponent(currentUser)}`;
-      if (lastSeenIdRef.current) url += `&since_id=${encodeURIComponent(lastSeenIdRef.current)}`;
+      if (maxSeqRef.current > 0) {
+        url += `&after_seq=${maxSeqRef.current}`;
+      } else if (lastSeenIdRef.current) {
+        url += `&since_id=${encodeURIComponent(lastSeenIdRef.current)}`;
+      }
       const res = await fetch(url, { headers: getAuthHeaders(sessionToken) });
       if (res.ok) {
         const data = await res.json();
@@ -147,17 +182,25 @@ export default function ChatPage() {
         if (incoming.length > 0) {
           setMessages((prev) => {
             const map = new Map<string, ChatMessage>();
-            prev.forEach((m) => map.set(m.id, m));
+            prev.forEach((m) => {
+              map.set(m.id, m);
+              if (m.clientMessageId) map.set(m.clientMessageId, m);
+            });
             incoming.forEach((m) => {
               map.set(m.id, m);
+              if (m.clientMessageId) map.set(m.clientMessageId, m);
               lastSeenIdRef.current = m.id;
+              if (m.seq) maxSeqRef.current = Math.max(maxSeqRef.current, m.seq);
               // Send ACK for incoming partner messages
               if (m.sender.toLowerCase() !== currentUser.toLowerCase()) {
                 sendAck(m.id, "delivered");
               }
             });
             const list = Array.from(map.values());
-            list.sort((a, b) => (Number(a.time_ms) || 0) - (Number(b.time_ms) || 0));
+            list.sort((a, b) => {
+              if (a.seq && b.seq) return a.seq - b.seq;
+              return (Number(a.time_ms) || 0) - (Number(b.time_ms) || 0);
+            });
             return list;
           });
         }
@@ -234,19 +277,37 @@ export default function ChatPage() {
     } catch {}
   }, [calcDays]);
 
-  // Flush Outgoing Message Queue
-  const flushQueue = useCallback(() => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    while (outgoingQueue.current.length > 0) {
-      const item = outgoingQueue.current.shift();
-      if (item) {
-        wsRef.current.send(JSON.stringify(item));
-        setMessages((prev) =>
-          prev.map((m) => (m.id === item.id ? { ...m, status: "sent" } : m))
-        );
+  // Flush Outgoing Offline IndexedDB Queue
+  const flushQueue = useCallback(async () => {
+    try {
+      const queue = await getPendingMessages();
+      if (!queue.length) return;
+      for (const item of queue) {
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify(item));
+          await removePendingMessage(item.clientMessageId);
+          setMessages((prev) =>
+            prev.map((m) => (m.clientMessageId === item.clientMessageId || m.id === item.clientMessageId ? { ...m, status: "sent" } : m))
+          );
+        } else {
+          const res = await fetch(`${API_BASE}/api/send`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...getAuthHeaders(sessionToken) },
+            body: JSON.stringify(item),
+          });
+          if (res.ok) {
+            await removePendingMessage(item.clientMessageId);
+            setMessages((prev) =>
+              prev.map((m) => (m.clientMessageId === item.clientMessageId || m.id === item.clientMessageId ? { ...m, status: "sent" } : m))
+            );
+          }
+        }
       }
+      refreshPendingCount();
+    } catch (e) {
+      console.warn("[Queue] Error flushing offline items:", e);
     }
-  }, []);
+  }, [sessionToken, refreshPendingCount]);
 
   // Connect WebSocket
   useEffect(() => {
@@ -262,6 +323,7 @@ export default function ChatPage() {
       wsRef.current = ws;
 
       ws.onopen = () => {
+        setConnectionStatus("connected");
         flushQueue();
         loadHistory();
         loadSettings();
@@ -359,12 +421,25 @@ export default function ChatPage() {
 
           // Regular chat / photo / audio message
           const chatItem: ChatMessage = msg;
+          if (chatItem.seq) maxSeqRef.current = Math.max(maxSeqRef.current, chatItem.seq);
+
           setMessages((prev) => {
-            if (prev.some((m) => m.id === chatItem.id)) return prev;
+            const exists = prev.some((m) => m.id === chatItem.id || (chatItem.clientMessageId && m.clientMessageId === chatItem.clientMessageId));
+            if (exists) {
+              return prev.map((m) => (m.id === chatItem.id || (chatItem.clientMessageId && m.clientMessageId === chatItem.clientMessageId) ? { ...m, ...chatItem, status: "sent" } : m));
+            }
             const updated = [...prev, chatItem];
-            updated.sort((a, b) => (Number(a.time_ms) || 0) - (Number(b.time_ms) || 0));
+            updated.sort((a, b) => {
+              if (a.seq && b.seq) return a.seq - b.seq;
+              return (Number(a.time_ms) || 0) - (Number(b.time_ms) || 0);
+            });
             return updated;
           });
+
+          // Remove from local IndexedDB queue if this was ours
+          if (chatItem.clientMessageId) {
+            removePendingMessage(chatItem.clientMessageId).then(() => refreshPendingCount());
+          }
 
           if (chatItem.sender.toLowerCase() !== currentUser.toLowerCase()) {
             sendAck(chatItem.id, "delivered");
@@ -374,17 +449,23 @@ export default function ChatPage() {
       };
 
       ws.onclose = () => {
+        setConnectionStatus(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "reconnecting");
         if (heartbeat) clearInterval(heartbeat);
         reconnectTimeout = setTimeout(() => connect(), 2000);
+      };
+
+      ws.onerror = () => {
+        setConnectionStatus("reconnecting");
       };
     };
 
     connect();
 
-    // Background Delta Polling (1.8s) for guaranteed background sync
+    // Background Delta Polling (2.5s) for guaranteed background sync
     const pollInterval = setInterval(() => {
       loadHistory();
-    }, 1800);
+      flushQueue();
+    }, 2500);
 
     return () => {
       if (ws) ws.close();
@@ -392,7 +473,7 @@ export default function ChatPage() {
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
       clearInterval(pollInterval);
     };
-  }, [isLoggedIn, currentUser, sessionToken, flushQueue, loadHistory, loadSettings, loadCheckin, loadTimeline, loadLetters, calcDays, sendAck, soundEnabled]);
+  }, [isLoggedIn, currentUser, sessionToken, flushQueue, loadHistory, loadSettings, loadCheckin, loadTimeline, loadLetters, calcDays, sendAck, soundEnabled, refreshPendingCount]);
 
   // Login handler
   const handleLogin = async (name: string, pin: string, avatar: string, remember: boolean) => {
@@ -436,77 +517,115 @@ export default function ChatPage() {
 
   // Send Message
   const handleSendMessage = async (content: string, stagedPhoto: string | null) => {
-    const msgId = "m_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+    const clientMessageId = "m_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
     const nowMs = Date.now();
+    const replyDoc = replyTarget
+      ? {
+          id: replyTarget.id,
+          sender: replyTarget.sender,
+          content: replyTarget.content,
+          type: replyTarget.type,
+        }
+      : null;
+
     const payload: ChatMessage = {
-      id: msgId,
-      msg_id: msgId,
+      id: clientMessageId,
+      clientMessageId,
+      msg_id: clientMessageId,
       sender: currentUser,
       content,
       image: stagedPhoto,
       type: stagedPhoto ? "image" : "chat",
       timestamp: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
       time_ms: nowMs,
+      reply_to: replyDoc,
       status: "pending",
       reactions: {},
     };
 
-    // 0ms Optimistic render
+    // 0ms Optimistic render & clear reply preview
     setMessages((prev) => [...prev, payload]);
+    setReplyTarget(null);
+
+    // Save to durable IndexedDB queue
+    await savePendingMessage(payload as PendingMessage);
+    refreshPendingCount();
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(payload));
       setMessages((prev) =>
-        prev.map((m) => (m.id === msgId ? { ...m, status: "sent" } : m))
+        prev.map((m) => (m.id === clientMessageId ? { ...m, status: "sent" } : m))
       );
     } else {
-      outgoingQueue.current.push(payload);
       fetch(`${API_BASE}/api/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders(sessionToken) },
         body: JSON.stringify(payload),
-      }).then((res) => {
+      }).then(async (res) => {
         if (res.ok) {
-          outgoingQueue.current = outgoingQueue.current.filter((x) => x.id !== msgId);
+          await removePendingMessage(clientMessageId);
+          refreshPendingCount();
           setMessages((prev) =>
-            prev.map((m) => (m.id === msgId ? { ...m, status: "sent" } : m))
+            prev.map((m) => (m.id === clientMessageId ? { ...m, status: "sent" } : m))
           );
         }
-      });
+      }).catch(() => {});
     }
   };
 
   // Send Audio Note
   const handleSendAudio = async (audioBase64: string, durationSec: number) => {
-    const msgId = "m_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+    const clientMessageId = "m_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
     const nowMs = Date.now();
+    const replyDoc = replyTarget
+      ? {
+          id: replyTarget.id,
+          sender: replyTarget.sender,
+          content: replyTarget.content,
+          type: replyTarget.type,
+        }
+      : null;
+
     const payload: ChatMessage = {
-      id: msgId,
-      msg_id: msgId,
+      id: clientMessageId,
+      clientMessageId,
+      msg_id: clientMessageId,
       sender: currentUser,
       audio: audioBase64,
       audio_duration: durationSec,
       type: "audio",
       timestamp: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
       time_ms: nowMs,
+      reply_to: replyDoc,
       status: "pending",
       reactions: {},
     };
 
     setMessages((prev) => [...prev, payload]);
+    setReplyTarget(null);
+
+    await savePendingMessage(payload as PendingMessage);
+    refreshPendingCount();
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(payload));
       setMessages((prev) =>
-        prev.map((m) => (m.id === msgId ? { ...m, status: "sent" } : m))
+        prev.map((m) => (m.id === clientMessageId ? { ...m, status: "sent" } : m))
       );
     } else {
-      outgoingQueue.current.push(payload);
       fetch(`${API_BASE}/api/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders(sessionToken) },
         body: JSON.stringify(payload),
-      });
+      }).then(async (res) => {
+        if (res.ok) {
+          await removePendingMessage(clientMessageId);
+          refreshPendingCount();
+          setMessages((prev) =>
+            prev.map((m) => (m.id === clientMessageId ? { ...m, status: "sent" } : m))
+          );
+        }
+      }).catch(() => {});
     }
   };
 
@@ -770,6 +889,8 @@ export default function ChatPage() {
           daysTogether={daysTogether}
           nudgeCooldown={nudgeCooldown}
           soundEnabled={soundEnabled}
+          connectionStatus={connectionStatus}
+          pendingCount={pendingCount}
           onOpenSidebar={() => setSidebarOpen(true)}
           onOpenAnniversary={() => setAnniversaryModalOpen(true)}
           onOpenThemeModal={() => setThemeModalOpen(true)}
@@ -798,6 +919,7 @@ export default function ChatPage() {
           onToggleReaction={handleToggleReaction}
           onDeleteMessage={handleDeleteMessage}
           onOpenPhoto={(src, sender, time) => setActivePhoto({ src, sender, time })}
+          onReplyMessage={(msg) => setReplyTarget(msg)}
         />
 
         <ChatInput
@@ -805,6 +927,8 @@ export default function ChatPage() {
           onSendAudio={handleSendAudio}
           onSendNudge={handleSendNudge}
           nudgeCooldown={nudgeCooldown}
+          replyTarget={replyTarget}
+          onCancelReply={() => setReplyTarget(null)}
         />
       </main>
 

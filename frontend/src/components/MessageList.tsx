@@ -10,6 +10,7 @@ interface MessageListProps {
   onToggleReaction: (msgId: string, emoji: string) => void;
   onDeleteMessage: (msgId: string) => void;
   onOpenPhoto: (src: string, sender: string, time: string) => void;
+  onReplyMessage?: (msg: ChatMessage) => void;
 }
 
 export function MessageList({
@@ -18,6 +19,7 @@ export function MessageList({
   onToggleReaction,
   onDeleteMessage,
   onOpenPhoto,
+  onReplyMessage,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
@@ -151,6 +153,18 @@ export function MessageList({
                       : "bg-[var(--theirs-bg)] text-[var(--theirs-text)] border border-[var(--border)] rounded-bl-sm"
                   }`}
                 >
+                  {/* Replied Quote */}
+                  {msg.reply_to && (
+                    <div className="mb-2 px-2.5 py-1.5 rounded-lg bg-black/25 border-l-2 border-[var(--accent)] text-xs text-left max-w-full">
+                      <div className="font-bold text-[var(--accent)] text-[11px] truncate">
+                        {msg.reply_to.sender}
+                      </div>
+                      <div className="text-white/80 truncate text-[11px]">
+                        {msg.reply_to.content || (msg.reply_to.type === "image" ? "📷 Live Moment" : msg.reply_to.type === "audio" ? "🎙️ Voice Note" : "Message")}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Photo with Photo-Shield */}
                   {msg.image && (
                     <div
@@ -206,7 +220,8 @@ export function MessageList({
                   {msg.content && <div className="whitespace-pre-wrap">{msg.content}</div>}
 
                   {/* Hover Quick Actions */}
-                  <div className="absolute -top-3 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-[var(--bg-card)] border border-[var(--border)] rounded-full px-1.5 py-0.5 shadow-lg flex items-center gap-1 text-xs z-10">
+                  <div className="absolute -top-3 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-[var(--bg-card)] border border-[var(--border)] rounded-full px-1.5 py-0.5 shadow-lg flex items-center gap-1.5 text-xs z-10">
+                    <button onClick={() => onReplyMessage?.(msg)} title="Reply" className="hover:scale-125 transition-transform text-white/90">↩️</button>
                     <button onClick={() => onToggleReaction(msg.id, "❤️")} className="hover:scale-125 transition-transform">❤️</button>
                     <button onClick={() => onToggleReaction(msg.id, "🥰")} className="hover:scale-125 transition-transform">🥰</button>
                     <button onClick={() => onToggleReaction(msg.id, "😂")} className="hover:scale-125 transition-transform">😂</button>

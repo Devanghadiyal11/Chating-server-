@@ -7,6 +7,8 @@ interface HeaderProps {
   daysTogether: number;
   nudgeCooldown: number;
   soundEnabled: boolean;
+  connectionStatus?: "connected" | "reconnecting" | "offline";
+  pendingCount?: number;
   onOpenSidebar: () => void;
   onOpenAnniversary: () => void;
   onOpenThemeModal: () => void;
@@ -20,6 +22,8 @@ export function Header({
   daysTogether,
   nudgeCooldown,
   soundEnabled,
+  connectionStatus = "connected",
+  pendingCount = 0,
   onOpenSidebar,
   onOpenAnniversary,
   onOpenThemeModal,
@@ -42,12 +46,36 @@ export function Header({
             <span className="truncate">{coupleName}</span>
             <span className="text-xs sm:text-sm">💕</span>
           </div>
-          <button
-            onClick={onOpenAnniversary}
-            className="text-[11px] sm:text-xs text-[var(--accent)] font-bold text-left truncate flex items-center gap-1 hover:underline"
-          >
-            <span>✨ Together {daysTogether} days 💕</span>
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={onOpenAnniversary}
+              className="text-[11px] sm:text-xs text-[var(--accent)] font-bold text-left truncate flex items-center gap-1 hover:underline"
+            >
+              <span>✨ Together {daysTogether} days 💕</span>
+            </button>
+            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[var(--bg-card)] border border-[var(--border)] text-[10px]">
+              {connectionStatus === "connected" && (
+                <span className="text-emerald-400 flex items-center gap-1 font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Live
+                </span>
+              )}
+              {connectionStatus === "reconnecting" && (
+                <span className="text-amber-400 flex items-center gap-1 font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span> Reconnecting
+                </span>
+              )}
+              {connectionStatus === "offline" && (
+                <span className="text-rose-400 flex items-center gap-1 font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span> Offline
+                </span>
+              )}
+              {pendingCount > 0 && (
+                <span className="text-amber-300 font-bold pl-0.5">
+                  • {pendingCount} queued
+                </span>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 

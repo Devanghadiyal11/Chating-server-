@@ -1,12 +1,15 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
+import { ChatMessage } from "@/lib/types";
 
 interface ChatInputProps {
   onSendMessage: (content: string, stagedPhoto: string | null) => void;
   onSendAudio: (audioBase64: string, durationSec: number) => void;
   onSendNudge: () => void;
   nudgeCooldown: number;
+  replyTarget?: ChatMessage | null;
+  onCancelReply?: () => void;
 }
 
 export function ChatInput({
@@ -14,6 +17,8 @@ export function ChatInput({
   onSendAudio,
   onSendNudge,
   nudgeCooldown,
+  replyTarget,
+  onCancelReply,
 }: ChatInputProps) {
   const [text, setText] = useState("");
   const [stagedPhoto, setStagedPhoto] = useState<string | null>(null);
@@ -179,6 +184,25 @@ export function ChatInput({
           <button
             onClick={() => setStagedPhoto(null)}
             className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 text-white text-[10px] flex items-center justify-center font-bold"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Replying Banner */}
+      {replyTarget && (
+        <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--bg-card)] rounded-xl border border-[var(--border)] mb-2 text-xs">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-[var(--accent)] font-bold shrink-0">Replying to {replyTarget.sender}:</span>
+            <span className="truncate text-[var(--text-sub)]">
+              {replyTarget.content || (replyTarget.type === "image" ? "📷 Live Photo" : replyTarget.type === "audio" ? "🎙️ Voice Note" : "Message")}
+            </span>
+          </div>
+          <button
+            onClick={onCancelReply}
+            className="text-white/60 hover:text-white text-xs font-bold pl-2 shrink-0"
+            title="Cancel reply"
           >
             ✕
           </button>
