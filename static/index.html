@@ -1297,13 +1297,63 @@
     if (soundEnabled) playMessageChime();
   }
 
-  // ── Theme Manager ─────────────────────────────
-  function setTheme(theme) {
+  // ── Synced Couple Theme Manager ────────────────
+  const THEME_NAMES = {
+    rose: "🌸 Rose Blossom",
+    lavender: "💜 Midnight Lavender",
+    sunset: "🌅 Sunset Warmth",
+    noir: "🌙 OLED Noir",
+    cream: "☁️ Cozy Cream"
+  };
+
+  const THEME_COLORS = {
+    rose: "#0c0a10",
+    lavender: "#090814",
+    sunset: "#130a0a",
+    noir: "#000000",
+    cream: "#faf5ef"
+  };
+
+  function applyTheme(theme) {
+    if (!theme) return;
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("couple_theme", theme);
+
+    // Update active highlight on theme chips
     document.querySelectorAll(".theme-chip").forEach(c => {
       c.classList.toggle("active", c.title.toLowerCase().includes(theme));
     });
+
+    // Update mobile address bar meta color
+    const metaTheme = document.querySelector('meta[name="theme-color"]');
+    if (metaTheme && THEME_COLORS[theme]) {
+      metaTheme.setAttribute("content", THEME_COLORS[theme]);
+    }
+  }
+
+  function setTheme(theme) {
+    applyTheme(theme);
+
+    // Sync theme change in real time across BOTH devices!
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "theme_change", theme }));
+    } else {
+      fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ theme })
+      });
+    }
+  }
+
+  function showThemeChangeNotification(sender, theme) {
+    const prettyName = THEME_NAMES[theme] || theme;
+    const toast = document.getElementById("nudgeToast");
+    document.getElementById("nudgeText").textContent = `${sender || 'Your partner'} changed our theme to ${prettyName} ✨`;
+    toast.classList.add("active");
+    playTone(587.33, 'sine', 0.2, 0); // D5
+    playTone(880, 'sine', 0.35, 0.1); // A5
+    setTimeout(() => toast.classList.remove("active"), 4000);
   }
 
   // ── Mobile Visual Viewport Handling (Glues chat bar to keyboard) ──
@@ -1475,6 +1525,13 @@
         if (msg.type === "pong") return;
         if (msg.type === "users_update") { renderUsers(msg.users || []); return; }
         if (msg.type === "settings_update") { updateSettingsUI(msg.settings || {}); return; }
+        if (msg.type === "theme_update") {
+          applyTheme(msg.theme);
+          if (msg.sender && msg.sender.toLowerCase() !== currentUser.toLowerCase()) {
+            showThemeChangeNotification(msg.sender, msg.theme);
+          }
+          return;
+        }
         if (msg.type === "typing") { handlePartnerTyping(msg); return; }
         if (msg.type === "nudge") { handleIncomingNudge(msg); return; }
         if (msg.type === "reaction_update") { handleReactionUpdate(msg); return; }
@@ -1560,6 +1617,9 @@
     }
     if (serverSettings.disappearing_mode !== undefined) {
       document.getElementById("disappearingSelect").value = serverSettings.disappearing_mode;
+    }
+    if (serverSettings.theme) {
+      applyTheme(serverSettings.theme);
     }
   }
 

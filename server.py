@@ -55,7 +55,8 @@ settings_col = None
 settings_cache: Dict[str, Any] = {
     "anniversary_date": "2024-02-14",
     "disappearing_mode": 0,  # 0 = disabled, seconds otherwise (e.g. 3600 for 1h, 86400 for 24h)
-    "couple_name": "Our Sweet Space 💕"
+    "couple_name": "Our Sweet Space 💕",
+    "theme": "rose"
 }
 
 # In-memory message store fallback if DB is temporarily unreachable
@@ -249,6 +250,7 @@ class SettingsPayload(BaseModel):
     anniversary_date: Optional[str] = None
     disappearing_mode: Optional[int] = None
     couple_name: Optional[str] = None
+    theme: Optional[str] = None
 
 # ─────────────────────────────────────────────
 # REST Endpoints
@@ -293,6 +295,8 @@ async def update_settings(payload: SettingsPayload):
         updates["disappearing_mode"] = payload.disappearing_mode
     if payload.couple_name is not None:
         updates["couple_name"] = payload.couple_name
+    if payload.theme is not None:
+        updates["theme"] = payload.theme
 
     if updates:
         await save_settings(updates)
@@ -499,6 +503,16 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                 msg_id = data.get("msg_id")
                 if msg_id:
                     await delete_single_message(msg_id)
+                continue
+
+            elif msg_type == "theme_change":
+                new_theme = data.get("theme", "rose")
+                await save_settings({"theme": new_theme})
+                await room.broadcast({
+                    "type": "theme_update",
+                    "theme": new_theme,
+                    "sender": username
+                })
                 continue
 
             # Regular chat / photo / audio message
