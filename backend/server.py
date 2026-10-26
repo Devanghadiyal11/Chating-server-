@@ -243,6 +243,16 @@ app.add_middleware(
 # Room & Presence Hub
 # ─────────────────────────────────────────────
 
+def normalize_username(u: Optional[str]) -> str:
+    if not u:
+        return ""
+    u_lower = str(u).strip().lower()
+    if u_lower in ["him", "he", "boy", "boyfriend", "hubby"]:
+        return "Him"
+    if u_lower in ["her", "she", "girl", "girlfriend", "wifey", "hew"]:
+        return "Her"
+    return str(u).strip().capitalize()
+
 class PrivateRoom:
     """The one and only private couple room — PIN 1012. Always alive."""
 
@@ -252,27 +262,54 @@ class PrivateRoom:
         self.pin = PRIVATE_PIN
 
     def get_online_users(self) -> List[str]:
-        return sorted(list(self.connections.keys()))
+        now = time.time()
+        online = set()
+
+        # 1. Any user currently holding an active WebSocket connection
+        for user, ws in list(self.connections.items()):
+            try:
+                if ws.client_state.name == "CONNECTED":
+                    online.add(normalize_username(user))
+                else:
+                    self.connections.pop(user, None)
+            except Exception:
+                online.add(normalize_username(user))
+
+        # 2. Any user active via presence polling / touch within the last 20 seconds
+        for user, last_seen in list(self.active_users.items()):
+            if now - last_seen < 20.0:
+                online.add(normalize_username(user))
+            elif now - last_seen > 120.0:
+                self.active_users.pop(user, None)
+
+        return sorted(list(online))
 
     def touch(self, username: str):
-        if username and username.strip():
-            self.active_users[username.strip()] = time.time()
+        if username and str(username).strip():
+            u_norm = normalize_username(username)
+            self.active_users[u_norm] = time.time()
 
-    def release(self, username: str):
-        self.connections.pop(username, None)
-        self.active_users.pop(username, None)
+    def release(self, username: str, ws: Optional[WebSocket] = None):
+        if not username:
+            return
+        u_norm = normalize_username(username)
+        # CRITICAL: Only pop if the registered ws matches the disconnecting ws
+        # Prevents race condition where closing old socket removes the new active socket
+        if ws is None or self.connections.get(u_norm) == ws:
+            self.connections.pop(u_norm, None)
 
     async def broadcast(self, msg: dict, exclude: Optional[str] = None):
         dead = []
+        exclude_norm = normalize_username(exclude) if exclude else None
         for user, ws in list(self.connections.items()):
-            if exclude and user.strip().lower() == exclude.strip().lower():
+            if exclude_norm and normalize_username(user) == exclude_norm:
                 continue
             try:
                 await ws.send_json(msg)
             except Exception:
-                dead.append(user)
-        for u in dead:
-            self.release(u)
+                dead.append((user, ws))
+        for u, w in dead:
+            self.release(u, w)
 
     async def broadcast_users(self):
         await self.broadcast({
@@ -916,20 +953,20 @@ async def get_users(username: Optional[str] = None):
 
 @app.websocket("/ws/{username}")
 async def websocket_endpoint(websocket: WebSocket, username: str):
-    username = username.strip()
+    username = normalize_username(username)
     user_lower = username.lower()
 
     # Verify session or token if provided
     token = websocket.query_params.get("token")
     if token and token in active_sessions:
-        username = active_sessions[token]["username"]
+        username = normalize_username(active_sessions[token]["username"])
         user_lower = username.lower()
 
     # Close any existing connection for this exact user on reconnect
     for existing_user in list(room.connections.keys()):
         if existing_user.lower() == user_lower:
-            old_ws = room.connections.pop(existing_user, None)
-            if old_ws:
+            old_ws = room.connections.get(existing_user)
+            if old_ws and old_ws != websocket:
                 try:
                     await old_ws.close()
                 except Exception:
@@ -1091,11 +1128,11 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
             await publish_event("message.created", username, chat_item, event_id=f"ev_msg_{chat_item['id']}")
 
     except WebSocketDisconnect:
-        room.release(username)
+        room.release(username, websocket)
         await room.broadcast_users()
     except Exception as e:
         print(f"[WS Error] Exception with user {username}: {e}")
-        room.release(username)
+        room.release(username, websocket)
         await room.broadcast_users()
 
 # ─────────────────────────────────────────────
