@@ -24,6 +24,9 @@ import asyncio
 import random
 import time
 import secrets
+import base64
+import hashlib
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Dict, List, Optional, Any
@@ -95,6 +98,40 @@ settings_cache: Dict[str, Any] = {
 memory_messages: List[dict] = []
 memory_events: List[dict] = []
 recent_msg_ids: set = set()
+
+# ─────────────────────────────────────────────
+# Network Photo Encryption / Storage Decryption
+# ─────────────────────────────────────────────
+PHOTO_SECRET = os.getenv("PHOTO_ENCRYPTION_SECRET", "couple_secret_key_1012_encrypted_transit")
+PHOTO_KEY = hashlib.sha256(PHOTO_SECRET.encode()).digest()
+_aesgcm = AESGCM(PHOTO_KEY)
+
+def encrypt_photo(plain_str: Optional[str]) -> Optional[str]:
+    """Encrypt photo payload for network transit."""
+    if not plain_str or not isinstance(plain_str, str) or plain_str.startswith("enc:v1:"):
+        return plain_str
+    try:
+        iv = os.urandom(12)
+        ct = _aesgcm.encrypt(iv, plain_str.encode("utf-8"), None)
+        return "enc:v1:" + base64.b64encode(iv + ct).decode("utf-8")
+    except Exception as e:
+        print(f"[Crypto] Encrypt error: {e}")
+        return plain_str
+
+def decrypt_photo(cipher_str: Optional[str]) -> Optional[str]:
+    """Decrypt photo from network transit and restore to original form for MongoDB storage."""
+    if not cipher_str or not isinstance(cipher_str, str) or not cipher_str.startswith("enc:v1:"):
+        return cipher_str
+    try:
+        raw = base64.b64decode(cipher_str[len("enc:v1:"):])
+        if len(raw) <= 12:
+            return cipher_str
+        iv = raw[:12]
+        ct = raw[12:]
+        return _aesgcm.decrypt(iv, ct, None).decode("utf-8")
+    except Exception as e:
+        print(f"[Crypto] Decrypt error: {e}")
+        return cipher_str
 
 def get_monotonic_time_ms() -> int:
     global last_monotonic_ms
@@ -368,6 +405,10 @@ async def save_message(msg: dict):
     if not content and not msg.get("image") and not msg.get("audio"):
         return  # Reject dummy/empty messages
 
+    # Always ensure photo is decrypted and stored in its original form in storage/MongoDB
+    if msg.get("image") and isinstance(msg["image"], str) and msg["image"].startswith("enc:v1:"):
+        msg["image"] = decrypt_photo(msg["image"])
+
     now_ms = int(time.time() * 1000)
     if not msg.get("time_ms"):
         msg["time_ms"] = now_ms
@@ -524,16 +565,25 @@ async def publish_event(
         except Exception:
             pass
 
+    # Prepare wire-safe copies with photos encrypted for network transmission
+    wire_event_doc = event_doc
+    wire_payload = payload
+    if event_type == "message.created" and isinstance(payload, dict) and payload.get("image"):
+        wire_payload = dict(payload)
+        wire_payload["image"] = encrypt_photo(payload["image"])
+        wire_event_doc = dict(event_doc)
+        wire_event_doc["payload"] = wire_payload
+
     # 1. IMMEDIATE WebSocket broadcast (0ms wait!)
     envelope = {
         "type": "event",
-        "event": event_doc
+        "event": wire_event_doc
     }
     await room.broadcast(envelope)
 
     # 2. Backward-compatible legacy event broadcasts
     if event_type == "message.created":
-        await room.broadcast(payload)
+        await room.broadcast(wire_payload)
     elif event_type == "nudge.created":
         await room.broadcast({
             "type": "nudge",
@@ -685,7 +735,16 @@ async def get_messages(since_id: Optional[str] = None, after_seq: Optional[int] 
     if username:
         room.touch(username)
     msgs = await load_messages(since_id=since_id, after_seq=after_seq)
-    return {"messages": msgs}
+    # Encrypt photos for safe transit across the network
+    wire_msgs = []
+    for m in msgs:
+        if m.get("image"):
+            m_wire = dict(m)
+            m_wire["image"] = encrypt_photo(m["image"])
+            wire_msgs.append(m_wire)
+        else:
+            wire_msgs.append(m)
+    return {"messages": wire_msgs}
 
 @app.post("/api/send")
 async def send_message(msg: ChatPayload, request: Request):
@@ -701,8 +760,13 @@ async def send_message(msg: ChatPayload, request: Request):
     message_id = msg.msg_id or msg.clientMessageId or f"m_{int(time.time()*1000)}_{random.randint(100, 999)}"
     now_ms = get_monotonic_time_ms()
 
+    # If incoming image from network is encrypted, decrypt to store original form in MongoDB
+    raw_image = msg.image
+    if raw_image and isinstance(raw_image, str) and raw_image.startswith("enc:v1:"):
+        raw_image = decrypt_photo(raw_image)
+
     msg_type = "chat"
-    if msg.image:
+    if raw_image:
         msg_type = "image"
     elif msg.audio:
         msg_type = "audio"
@@ -721,7 +785,7 @@ async def send_message(msg: ChatPayload, request: Request):
         "type": msg_type,
         "sender": msg.sender,
         "content": msg.content or "",
-        "image": msg.image,
+        "image": raw_image,
         "audio": msg.audio,
         "audio_duration": msg.audio_duration,
         "reply_to": msg.reply_to,
@@ -732,11 +796,15 @@ async def send_message(msg: ChatPayload, request: Request):
         "reactions": {}
     }
 
-    # Store in memory & broadcast immediately without WAN wait
+    # Store in memory & MongoDB in original form, broadcast to WebSocket
     await save_message(chat_item)
     room.touch(msg.sender)
     await publish_event("message.created", msg.sender, chat_item, event_id=f"ev_msg_{chat_item['id']}")
-    return {"status": "ok", "message": chat_item}
+
+    wire_chat_item = dict(chat_item)
+    if wire_chat_item.get("image"):
+        wire_chat_item["image"] = encrypt_photo(wire_chat_item["image"])
+    return {"status": "ok", "message": wire_chat_item}
 
 @app.post("/api/ack")
 async def acknowledge_delivery(req: Request):
@@ -876,25 +944,37 @@ async def get_events(after_seq: Optional[int] = None, limit: int = 250):
     purge_dummy_messages()
     limit = min(max(1, limit), 500)
 
+    raw_evs = []
     if events_col is not None:
         try:
             q: Dict[str, Any] = {}
             if after_seq is not None:
                 q["seq"] = {"$gt": after_seq}
             ev_cursor = events_col.find(q, {"_id": 0}).sort("seq", 1).limit(limit)
-            db_evs = []
             async for ev in ev_cursor:
-                db_evs.append(ev)
-            if db_evs:
-                return {"events": db_evs}
+                raw_evs.append(ev)
         except Exception as e:
             print(f"[DB Error] loading events: {e}")
 
-    mem = memory_events
-    if after_seq is not None:
-        mem = [ev for ev in mem if ev.get("seq", 0) > after_seq]
-    mem = sorted(mem, key=lambda x: x.get("seq", 0))[:limit]
-    return {"events": mem}
+    if not raw_evs:
+        mem = memory_events
+        if after_seq is not None:
+            mem = [ev for ev in mem if ev.get("seq", 0) > after_seq]
+        raw_evs = sorted(mem, key=lambda x: x.get("seq", 0))[:limit]
+
+    # Encrypt photo payloads for wire transmission
+    wire_evs = []
+    for ev in raw_evs:
+        if ev.get("type") == "message.created" and isinstance(ev.get("payload"), dict) and ev["payload"].get("image"):
+            ev_copy = dict(ev)
+            payload_copy = dict(ev["payload"])
+            payload_copy["image"] = encrypt_photo(payload_copy["image"])
+            ev_copy["payload"] = payload_copy
+            wire_evs.append(ev_copy)
+        else:
+            wire_evs.append(ev)
+
+    return {"events": wire_evs}
 
 @app.get("/api/purge_dummies")
 @app.post("/api/purge_dummies")
@@ -1090,6 +1170,10 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
             content = str(data.get("content", "")).strip()
             image = data.get("image")
             audio = data.get("audio")
+
+            # Decrypt network-encrypted photo to store original form in MongoDB
+            if image and isinstance(image, str) and image.startswith("enc:v1:"):
+                image = decrypt_photo(image)
 
             # Strictly reject dummy / empty messages
             if not content and not image and not audio:
