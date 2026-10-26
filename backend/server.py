@@ -162,13 +162,30 @@ async def lifespan(app: FastAPI):
             pass
         print(f"[DB] Connected to MongoDB Atlas - {DB_NAME}")
 
-        # Ephemeral mode: wipe any previous persistent chat documents from database storage
+        # Load persisted chat history from MongoDB Atlas into memory cache
         try:
-            await messages_col.delete_many({})
-            await events_col.delete_many({})
-            print("[Storage] Ephemeral mode: wiped any stored chats.")
-        except Exception:
-            pass
+            cursor = messages_col.find(
+                {
+                    "$or": [
+                        {"content": {"$regex": r"\S"}},
+                        {"image": {"$ne": None, "$ne": ""}},
+                        {"audio": {"$ne": None, "$ne": ""}}
+                    ]
+                },
+                {"_id": 0}
+            ).sort([("time_ms", 1), ("seq", 1)]).limit(1000)
+
+            loaded_count = 0
+            async for doc in cursor:
+                memory_messages.append(doc)
+                if "id" in doc:
+                    recent_msg_ids.add(doc["id"])
+                if "clientMessageId" in doc:
+                    recent_msg_ids.add(doc["clientMessageId"])
+                loaded_count += 1
+            print(f"[DB] Restored {loaded_count} persistent messages from MongoDB Atlas.")
+        except Exception as e:
+            print(f"[DB Restore Warning] {e}")
 
         # Load persisted settings
         stored_conf = await settings_col.find_one({"_id": "couple_settings"}, {"_id": 0})
@@ -301,7 +318,7 @@ def get_next_seq() -> int:
     return last_seq_time_ms
 
 async def save_message(msg: dict):
-    """Zero storage: kept strictly in memory for live relay between connected users."""
+    """Persist message to MongoDB Atlas and memory cache so chat survives rejoin/restart."""
     global memory_messages
     content = str(msg.get("content", "")).strip()
     if not content and not msg.get("image") and not msg.get("audio"):
@@ -311,20 +328,39 @@ async def save_message(msg: dict):
     if not msg.get("time_ms"):
         msg["time_ms"] = now_ms
     # Sequence for every chat using time
-    msg["seq"] = get_next_seq()
+    if not msg.get("seq"):
+        msg["seq"] = get_next_seq()
     if not msg.get("time"):
         msg["time"] = datetime.now().strftime("%I:%M %p")
 
-    if msg.get("id"):
-        recent_msg_ids.add(msg["id"])
+    msg_id = msg.get("id")
+    if msg_id:
+        recent_msg_ids.add(msg_id)
     if msg.get("clientMessageId"):
         recent_msg_ids.add(msg["clientMessageId"])
     if len(recent_msg_ids) > 4000:
         recent_msg_ids.clear()
 
-    memory_messages.append(msg)
-    if len(memory_messages) > 500:
+    # Deduplicate in memory
+    existing_idx = next((i for i, m in enumerate(memory_messages) if m.get("id") == msg_id), -1)
+    if existing_idx >= 0:
+        memory_messages[existing_idx] = msg
+    else:
+        memory_messages.append(msg)
+    if len(memory_messages) > 1000:
         memory_messages.pop(0)
+
+    # Persist permanently to MongoDB Atlas
+    if messages_col is not None and msg_id:
+        try:
+            doc_to_save = {k: v for k, v in msg.items() if k != "_id"}
+            await messages_col.update_one(
+                {"id": msg_id},
+                {"$set": doc_to_save},
+                upsert=True
+            )
+        except Exception as e:
+            print(f"[DB Error] Saving message to MongoDB: {e}")
 
 def purge_dummy_messages():
     """Purge any empty/whitespace dummy messages from memory caches."""
@@ -344,10 +380,47 @@ def purge_dummy_messages():
         )
     ]
 
-async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int] = None) -> List[dict]:
-    """Ephemeral in-memory messages only."""
-    purge_dummy_messages()
+async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int] = None, limit: int = 500) -> List[dict]:
+    """Load persistent chat history from MongoDB Atlas with in-memory fast fallback."""
     now_ms = int(time.time() * 1000)
+
+    if messages_col is not None:
+        try:
+            query: Dict[str, Any] = {
+                "$or": [
+                    {"expires_at": None},
+                    {"expires_at": {"$gt": now_ms}}
+                ],
+                "$and": [
+                    {
+                        "$or": [
+                            {"content": {"$regex": r"\S"}},
+                            {"image": {"$ne": None, "$ne": ""}},
+                            {"audio": {"$ne": None, "$ne": ""}}
+                        ]
+                    }
+                ]
+            }
+            if after_seq is not None:
+                query["seq"] = {"$gt": after_seq}
+            elif since_id:
+                since_doc = await messages_col.find_one({"id": since_id}, {"seq": 1, "time_ms": 1})
+                if since_doc and "seq" in since_doc:
+                    query["seq"] = {"$gt": since_doc["seq"]}
+                elif since_doc and "time_ms" in since_doc:
+                    query["time_ms"] = {"$gt": since_doc["time_ms"]}
+
+            cursor = messages_col.find(query, {"_id": 0}).sort([("time_ms", 1), ("seq", 1)]).limit(limit)
+            db_msgs = []
+            async for doc in cursor:
+                db_msgs.append(doc)
+            if db_msgs:
+                return db_msgs
+        except Exception as e:
+            print(f"[DB Error] loading messages from MongoDB: {e}")
+
+    # Fallback to memory_messages
+    purge_dummy_messages()
     valid_mem = [
         m for m in memory_messages
         if not (m.get("expires_at") and m["expires_at"] < now_ms)
@@ -360,7 +433,7 @@ async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int]
         if idx != -1:
             valid_mem = valid_mem[idx + 1:]
     valid_mem.sort(key=lambda x: (x.get("seq", 0), x.get("time_ms", 0), x.get("id", "")))
-    return valid_mem
+    return valid_mem[:limit]
 
 async def save_settings(new_conf: dict):
     settings_cache.update(new_conf)
@@ -406,6 +479,14 @@ async def publish_event(
     memory_events.append(event_doc)
     if len(memory_events) > 2000:
         memory_events.pop(0)
+
+    # Persist event to MongoDB Atlas in background
+    if events_col is not None:
+        try:
+            ev_to_save = {k: v for k, v in event_doc.items() if k != "_id"}
+            asyncio.create_task(events_col.insert_one(ev_to_save))
+        except Exception:
+            pass
 
     # 1. IMMEDIATE WebSocket broadcast (0ms wait!)
     envelope = {
@@ -754,9 +835,24 @@ async def clear_messages():
 
 @app.get("/api/events")
 async def get_events(after_seq: Optional[int] = None, limit: int = 250):
-    """Retrieve active live session events. Zero database persistence."""
+    """Retrieve event catch-up stream from MongoDB Atlas or memory cache."""
     purge_dummy_messages()
     limit = min(max(1, limit), 500)
+
+    if events_col is not None:
+        try:
+            q: Dict[str, Any] = {}
+            if after_seq is not None:
+                q["seq"] = {"$gt": after_seq}
+            ev_cursor = events_col.find(q, {"_id": 0}).sort("seq", 1).limit(limit)
+            db_evs = []
+            async for ev in ev_cursor:
+                db_evs.append(ev)
+            if db_evs:
+                return {"events": db_evs}
+        except Exception as e:
+            print(f"[DB Error] loading events: {e}")
+
     mem = memory_events
     if after_seq is not None:
         mem = [ev for ev in mem if ev.get("seq", 0) > after_seq]
@@ -996,19 +1092,10 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
     except WebSocketDisconnect:
         room.release(username)
         await room.broadcast_users()
-        # Ephemeral mode: when all users disconnect, wipe live chat from memory
-        if len(room.connections) == 0:
-            memory_messages.clear()
-            memory_events.clear()
-            recent_msg_ids.clear()
     except Exception as e:
         print(f"[WS Error] Exception with user {username}: {e}")
         room.release(username)
         await room.broadcast_users()
-        if len(room.connections) == 0:
-            memory_messages.clear()
-            memory_events.clear()
-            recent_msg_ids.clear()
 
 # ─────────────────────────────────────────────
 # Media Upload API & Static Files
