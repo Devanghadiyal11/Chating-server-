@@ -275,11 +275,11 @@ class PrivateRoom:
             except Exception:
                 online.add(normalize_username(user))
 
-        # 2. Any user active via presence polling / touch within the last 20 seconds
+        # 2. Any user active via presence polling / touch within the last 5 seconds
         for user, last_seen in list(self.active_users.items()):
-            if now - last_seen < 20.0:
+            if now - last_seen < 5.0:
                 online.add(normalize_username(user))
-            elif now - last_seen > 120.0:
+            else:
                 self.active_users.pop(user, None)
 
         return sorted(list(online))
@@ -297,6 +297,7 @@ class PrivateRoom:
         # Prevents race condition where closing old socket removes the new active socket
         if ws is None or self.connections.get(u_norm) == ws:
             self.connections.pop(u_norm, None)
+            self.active_users.pop(u_norm, None)
 
     async def broadcast(self, msg: dict, exclude: Optional[str] = None):
         dead = []
@@ -947,6 +948,19 @@ async def get_users(username: Optional[str] = None):
         room.touch(username)
     return {"users": room.get_online_users()}
 
+@app.post("/api/leave")
+@app.get("/api/leave")
+async def user_leave(username: Optional[str] = None):
+    """Instant offline notification when user closes tab or navigates away."""
+    if username:
+        room.release(username)
+        await room.broadcast({
+            "type": "partner_offline",
+            "username": username
+        }, exclude=username)
+        await room.broadcast_users()
+    return {"status": "left"}
+
 # ─────────────────────────────────────────────
 # WebSocket Endpoint with Auth & State Sync
 # ─────────────────────────────────────────────
@@ -1129,10 +1143,18 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
 
     except WebSocketDisconnect:
         room.release(username, websocket)
+        await room.broadcast({
+            "type": "partner_offline",
+            "username": username
+        }, exclude=username)
         await room.broadcast_users()
     except Exception as e:
         print(f"[WS Error] Exception with user {username}: {e}")
         room.release(username, websocket)
+        await room.broadcast({
+            "type": "partner_offline",
+            "username": username
+        }, exclude=username)
         await room.broadcast_users()
 
 # ─────────────────────────────────────────────
