@@ -232,10 +232,11 @@ app = FastAPI(title="Our Sweet Space 💕 - Couple Server", lifespan=lifespan)
 # Allow CORS for Next.js on Vercel or local development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"^https?:\/\/.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # ─────────────────────────────────────────────
