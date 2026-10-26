@@ -155,6 +155,11 @@ async def lifespan(app: FastAPI):
         await messages_col.create_index("time_ms")
         await messages_col.create_index("id", unique=True)
         try:
+            await messages_col.create_index("seq")
+            await messages_col.create_index([("time_ms", 1), ("seq", 1)])
+        except Exception:
+            pass
+        try:
             await events_col.create_index("seq")
             await events_col.create_index("eventId", unique=True)
             await events_col.create_index("createdAt")
@@ -429,15 +434,6 @@ async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int]
                 "$or": [
                     {"expires_at": None},
                     {"expires_at": {"$gt": now_ms}}
-                ],
-                "$and": [
-                    {
-                        "$or": [
-                            {"content": {"$regex": r"\S"}},
-                            {"image": {"$ne": None, "$ne": ""}},
-                            {"audio": {"$ne": None, "$ne": ""}}
-                        ]
-                    }
                 ]
             }
             if after_seq is not None:
@@ -452,7 +448,8 @@ async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int]
             cursor = messages_col.find(query, {"_id": 0}).sort([("time_ms", 1), ("seq", 1)]).limit(limit)
             db_msgs = []
             async for doc in cursor:
-                db_msgs.append(doc)
+                if bool(str(doc.get("content", "")).strip()) or bool(doc.get("image")) or bool(doc.get("audio")):
+                    db_msgs.append(doc)
             if db_msgs:
                 return db_msgs
         except Exception as e:
@@ -616,11 +613,12 @@ def find_existing_message(msg_id: Optional[str], client_id: Optional[str]) -> Op
     ids = [x for x in [msg_id, client_id] if x]
     if not ids:
         return None
-    for m in memory_messages:
-        if m.get("id") in ids or m.get("clientMessageId") in ids:
-            return m
+    # Fast-path O(1) set lookup for duplicate detection
     for i in ids:
         if i in recent_msg_ids:
+            for m in reversed(memory_messages):
+                if m.get("id") == i or m.get("clientMessageId") == i:
+                    return m
             return {"id": i, "duplicate": True}
     return None
 
