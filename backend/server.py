@@ -100,6 +100,7 @@ settings_cache: Dict[str, Any] = {
 # In-memory fallbacks & fast lookup caches
 memory_messages: List[dict] = []
 memory_events: List[dict] = []
+memory_images: List[dict] = []
 recent_msg_ids: set = set()
 
 # ─────────────────────────────────────────────
@@ -516,6 +517,28 @@ async def save_message(msg: dict):
             )
         except Exception as e:
             print(f"[DB Error] Saving photo to images collection: {e}")
+
+    # Maintain in-memory image cache
+    if msg.get("image") and msg_id:
+        existing_img_idx = next((i for i, im in enumerate(memory_images) if im.get("id") == msg_id), -1)
+        mem_img = {
+            "id": msg_id,
+            "clientMessageId": msg.get("clientMessageId") or msg_id,
+            "sender": msg.get("sender", "unknown"),
+            "image": msg["image"],
+            "content": msg.get("content", ""),
+            "time_ms": msg.get("time_ms") or int(time.time() * 1000),
+            "datetime": msg.get("datetime"),
+            "created_at": msg.get("created_at") or msg.get("datetime"),
+            "soft_deleted": False,
+            "cleared_from_chat": False,
+        }
+        if existing_img_idx >= 0:
+            memory_images[existing_img_idx] = mem_img
+        else:
+            memory_images.append(mem_img)
+        if len(memory_images) > 300:
+            memory_images.pop(0)
 
 def purge_dummy_messages():
     """Purge any empty/whitespace dummy messages from memory caches."""
@@ -1109,30 +1132,42 @@ async def clear_messages():
     memory_messages = []
     memory_events = []
     recent_msg_ids = set()
+    for im in memory_images:
+        im["soft_deleted"] = True
+        im["cleared_from_chat"] = True
 
     await publish_event("chat.cleared", "system", {"timestamp": datetime.now().strftime("%H:%M")})
     return {"status": "cleared", "photos_soft_deleted_and_stored": True}
 
 @app.get("/api/images")
 async def get_all_images(include_cleared: bool = True):
-    """Retrieve all preserved photos from the dedicated MongoDB 'images' collection."""
-    if images_col is None:
-        return {"images": []}
-    try:
-        query: Dict[str, Any] = {}
-        if not include_cleared:
-            query = {"soft_deleted": {"$ne": True}}
-        cursor = images_col.find(query, {"_id": 0}).sort([("time_ms", -1), ("datetime", -1)]).limit(1000)
-        imgs = []
-        async for doc in cursor:
-            item = dict(doc)
-            if item.get("image"):
-                item["image"] = encrypt_photo(item["image"])
-            imgs.append(item)
-        return {"images": imgs}
-    except Exception as e:
-        print(f"[DB Error] get_all_images: {e}")
-        return {"images": []}
+    """Retrieve all preserved photos from the dedicated MongoDB 'images' collection (or memory cache)."""
+    if images_col is not None:
+        try:
+            query: Dict[str, Any] = {}
+            if not include_cleared:
+                query = {"soft_deleted": {"$ne": True}}
+            cursor = images_col.find(query, {"_id": 0}).sort([("time_ms", -1), ("datetime", -1)]).limit(1000)
+            imgs = []
+            async for doc in cursor:
+                item = dict(doc)
+                if item.get("image"):
+                    item["image"] = encrypt_photo(item["image"])
+                imgs.append(item)
+            return {"images": imgs}
+        except Exception as e:
+            print(f"[DB Error] get_all_images: {e}")
+
+    # Fallback to memory_images
+    fallback = []
+    for doc in memory_images:
+        if not include_cleared and doc.get("soft_deleted"):
+            continue
+        item = dict(doc)
+        if item.get("image"):
+            item["image"] = encrypt_photo(item["image"])
+        fallback.append(item)
+    return {"images": fallback}
 
 # ─────────────────────────────────────────────
 # REST API: Event Stream & Catch-up Recovery
