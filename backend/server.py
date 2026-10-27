@@ -28,7 +28,7 @@ import base64
 import hashlib
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 
 import motor.motor_asyncio
@@ -412,6 +412,11 @@ async def save_message(msg: dict):
     now_ms = int(time.time() * 1000)
     if not msg.get("time_ms"):
         msg["time_ms"] = now_ms
+    # Full ISO datetime representation for bulletproof datetime ordering
+    if not msg.get("datetime"):
+        msg["datetime"] = datetime.fromtimestamp(msg["time_ms"] / 1000.0, tz=timezone.utc).isoformat()
+    if not msg.get("created_at"):
+        msg["created_at"] = msg["datetime"]
     # Sequence for every chat using time
     if not msg.get("seq"):
         msg["seq"] = get_next_seq()
@@ -465,6 +470,15 @@ def purge_dummy_messages():
         )
     ]
 
+def ensure_msg_datetime(doc: dict) -> dict:
+    """Ensure message always has full ISO 8601 datetime for exact date+time ordering."""
+    if not doc.get("datetime"):
+        tms = doc.get("time_ms") or doc.get("seq") or int(time.time() * 1000)
+        doc["datetime"] = datetime.fromtimestamp(tms / 1000.0, tz=timezone.utc).isoformat()
+    if not doc.get("created_at"):
+        doc["created_at"] = doc["datetime"]
+    return doc
+
 async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int] = None, limit: int = 2000) -> List[dict]:
     """Load persistent chat history from MongoDB Atlas with in-memory fast fallback."""
     now_ms = int(time.time() * 1000)
@@ -483,7 +497,7 @@ async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int]
                 db_msgs = []
                 async for doc in cursor:
                     if bool(str(doc.get("content", "")).strip()) or bool(doc.get("image")) or bool(doc.get("audio")):
-                        db_msgs.append(doc)
+                        db_msgs.append(ensure_msg_datetime(doc))
                 return db_msgs
             elif since_id:
                 since_doc = await messages_col.find_one({"id": since_id}, {"seq": 1, "time_ms": 1})
@@ -495,7 +509,7 @@ async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int]
                 db_msgs = []
                 async for doc in cursor:
                     if bool(str(doc.get("content", "")).strip()) or bool(doc.get("image")) or bool(doc.get("audio")):
-                        db_msgs.append(doc)
+                        db_msgs.append(ensure_msg_datetime(doc))
                 return db_msgs
             else:
                 # Retrieve the most recent messages up to limit in chronological order
@@ -503,7 +517,7 @@ async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int]
                 db_msgs = []
                 async for doc in cursor:
                     if bool(str(doc.get("content", "")).strip()) or bool(doc.get("image")) or bool(doc.get("audio")):
-                        db_msgs.append(doc)
+                        db_msgs.append(ensure_msg_datetime(doc))
                 db_msgs.reverse()
                 return db_msgs
         except Exception as e:
@@ -512,7 +526,7 @@ async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int]
     # Fallback to memory_messages
     purge_dummy_messages()
     valid_mem = [
-        m for m in memory_messages
+        ensure_msg_datetime(m) for m in memory_messages
         if not (m.get("expires_at") and m["expires_at"] < now_ms)
         and (bool(str(m.get("content", "")).strip()) or bool(m.get("image")) or bool(m.get("audio")))
     ]
@@ -793,6 +807,7 @@ async def send_message(msg: ChatPayload, request: Request):
     other_online = any(u.lower() != msg.sender.lower() for u in online_users)
     initial_status = "delivered" if other_online else "sent"
 
+    now_iso = datetime.now(timezone.utc).isoformat()
     chat_item = {
         "id": message_id,
         "clientMessageId": msg.clientMessageId or message_id,
@@ -805,6 +820,8 @@ async def send_message(msg: ChatPayload, request: Request):
         "reply_to": msg.reply_to,
         "timestamp": datetime.now().strftime("%H:%M"),
         "time_ms": now_ms,
+        "datetime": now_iso,
+        "created_at": now_iso,
         "expires_at": expires_at,
         "status": initial_status,
         "reactions": {}
@@ -1215,6 +1232,7 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
             other_online = any(u.lower() != username.lower() for u in room.connections.keys())
             initial_status = "delivered" if other_online else "sent"
 
+            now_iso = datetime.now(timezone.utc).isoformat()
             chat_item = {
                 "id": message_id,
                 "clientMessageId": client_msg_id,
@@ -1227,6 +1245,8 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                 "reply_to": data.get("reply_to"),
                 "timestamp": datetime.now().strftime("%H:%M"),
                 "time_ms": now_ms,
+                "datetime": now_iso,
+                "created_at": now_iso,
                 "expires_at": expires_at,
                 "status": initial_status,
                 "reactions": {}
