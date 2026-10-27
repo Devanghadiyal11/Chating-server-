@@ -172,8 +172,36 @@ async def cleanup_expired_messages():
                 m for m in memory_messages
                 if not (m.get("expires_at") and m["expires_at"] < now_ms)
             ]
+        except asyncio.CancelledError:
+            break
         except Exception as e:
             print(f"[Cleanup] Error pruning expired messages: {e}")
+
+async def keep_alive_ping():
+    """Prevent Render Free Tier from spinning down by pinging health endpoint every 10 minutes."""
+    server_url = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("SERVER_URL") or "https://chating-server-a39o.onrender.com"
+    health_url = server_url.rstrip("/") + "/health"
+    try:
+        await asyncio.sleep(60)  # Wait 1 minute after startup
+    except asyncio.CancelledError:
+        return
+
+    while True:
+        try:
+            import urllib.request
+            req = urllib.request.Request(health_url, headers={"User-Agent": "RenderKeepAlive/1.0"})
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, lambda: urllib.request.urlopen(req, timeout=15).read())
+            print(f"[KeepAlive] Successfully pinged {health_url} to keep server awake.")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[KeepAlive Note] Self-ping status: {e}")
+
+        try:
+            await asyncio.sleep(600)  # Ping every 10 minutes
+        except asyncio.CancelledError:
+            break
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -189,22 +217,20 @@ async def lifespan(app: FastAPI):
         sessions_col = db[COL_SESS]
         events_col = db[COL_EVNT]
 
-        await messages_col.create_index("time_ms")
-        await messages_col.create_index("id", unique=True)
-        try:
-            await messages_col.create_index("seq")
-            await messages_col.create_index([("time_ms", 1), ("seq", 1)])
-        except Exception:
-            pass
-        try:
-            await events_col.create_index("seq")
-            await events_col.create_index("eventId", unique=True)
-            await events_col.create_index("createdAt")
-        except Exception:
-            pass
+        # Safely create indexes without failing if they already exist
+        for idx in ["time_ms", "id", "seq", [("time_ms", 1), ("seq", 1)]]:
+            try:
+                await messages_col.create_index(idx)
+            except Exception:
+                pass
+        for ev_idx in ["seq", "eventId", "createdAt"]:
+            try:
+                await events_col.create_index(ev_idx)
+            except Exception:
+                pass
         print(f"[DB] Connected to MongoDB Atlas - {DB_NAME}")
 
-        # Load persisted chat history from MongoDB Atlas into memory cache
+        # Load persisted chat history from MongoDB Atlas into memory cache (last 100 to save RAM)
         try:
             cursor = messages_col.find(
                 {
@@ -215,17 +241,18 @@ async def lifespan(app: FastAPI):
                     ]
                 },
                 {"_id": 0}
-            ).sort([("time_ms", 1), ("seq", 1)]).limit(1000)
+            ).sort([("time_ms", -1), ("seq", -1)]).limit(100)
 
-            loaded_count = 0
+            loaded_msgs = []
             async for doc in cursor:
-                memory_messages.append(doc)
+                loaded_msgs.append(ensure_msg_datetime(doc))
                 if "id" in doc:
                     recent_msg_ids.add(doc["id"])
                 if "clientMessageId" in doc:
                     recent_msg_ids.add(doc["clientMessageId"])
-                loaded_count += 1
-            print(f"[DB] Restored {loaded_count} persistent messages from MongoDB Atlas.")
+            loaded_msgs.reverse()
+            memory_messages.extend(loaded_msgs)
+            print(f"[DB] Restored {len(loaded_msgs)} recent messages into memory cache.")
         except Exception as e:
             print(f"[DB Restore Warning] {e}")
 
@@ -248,7 +275,7 @@ async def lifespan(app: FastAPI):
 
         # Pre-populate recent message IDs into memory cache for instant deduplication
         try:
-            recent_cursor = messages_col.find({}, {"id": 1, "clientMessageId": 1}).sort("time_ms", -1).limit(500)
+            recent_cursor = messages_col.find({}, {"id": 1, "clientMessageId": 1}).sort("time_ms", -1).limit(300)
             async for r_doc in recent_cursor:
                 if "id" in r_doc:
                     recent_msg_ids.add(r_doc["id"])
@@ -264,8 +291,10 @@ async def lifespan(app: FastAPI):
         print(f"[DB Warning] Could not connect to MongoDB Atlas: {e}. Running with memory fallback.")
 
     cleanup_task = asyncio.create_task(cleanup_expired_messages())
+    keep_alive_task = asyncio.create_task(keep_alive_ping())
     yield
     cleanup_task.cancel()
+    keep_alive_task.cancel()
     if mongo_client:
         mongo_client.close()
 
@@ -437,7 +466,7 @@ async def save_message(msg: dict):
         memory_messages[existing_idx] = msg
     else:
         memory_messages.append(msg)
-    if len(memory_messages) > 1000:
+    if len(memory_messages) > 150:
         memory_messages.pop(0)
 
     # Persist permanently to MongoDB Atlas
@@ -581,7 +610,7 @@ async def publish_event(
     }
 
     memory_events.append(event_doc)
-    if len(memory_events) > 2000:
+    if len(memory_events) > 300:
         memory_events.pop(0)
 
     # Persist event to MongoDB Atlas in background
@@ -756,6 +785,17 @@ async def join_room(req: JoinRequest, request: Request):
 # ─────────────────────────────────────────────
 # REST API: Messaging & Acknowledgments
 # ─────────────────────────────────────────────
+
+@app.get("/health")
+@app.get("/api/health")
+async def health_check():
+    """Health endpoint for Render monitoring, UptimeRobot, and self-ping."""
+    return {
+        "status": "healthy",
+        "time": datetime.now(timezone.utc).isoformat(),
+        "mongo_connected": messages_col is not None,
+        "online_users": room.get_online_users()
+    }
 
 @app.get("/api/messages")
 async def get_messages(since_id: Optional[str] = None, after_seq: Optional[int] = None, limit: Optional[int] = 2000, username: Optional[str] = None):
@@ -1322,10 +1362,10 @@ async def get_index():
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
+    port = int(os.getenv("PORT", 8000))
     print("=" * 60)
     print("  [COUPLE'S PRIVATE CHAT SERVER]")
     print(f"  PIN: {PRIVATE_PIN}  |  Max users: {MAX_USERS}")
-    print("  Local:   http://127.0.0.1:8000")
-    print("  Network: http://0.0.0.0:8000")
+    print(f"  Port: {port}")
     print("=" * 60)
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=port)
