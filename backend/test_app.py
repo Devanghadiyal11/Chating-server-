@@ -35,20 +35,13 @@ def run_tests():
         else:
             print(f"  [-] FAIL: {name} - {details}")
 
-    # --- 1. Static Asset & Frontend Integrity ---
-    print("\n--- 1. Testing Frontend Static Assets & Security Markups ---")
+    # --- 1. Root API Status ---
+    print("\n--- 1. Testing API Root Status ---")
     res = client.get("/")
-    assert_test("GET / serves index.html with 200 OK", res.status_code == 200)
-    html_content = res.text
-    
-    assert_test("Brand Title is 'Chating room'", "Chating room" in html_content)
-    assert_test("Photo View-Only Security Shield is present", "photo-secure-wrapper" in html_content and "photo-shield" in html_content)
-    assert_test("Secure Canvas Lightbox is present", "lightboxCanvas" in html_content and "lightbox-shield" in html_content)
-    assert_test("Watermark overlay is removed from photos", "photo-watermark" not in html_content and "lightbox-watermark" not in html_content)
-    assert_test("Anti-Screenshot Privacy Curtain is present", "privacyCurtain" in html_content)
-    assert_test("Auto-Alignment for long text CSS is present", "auto-align-long" in html_content and "text-align: justify" in html_content)
-    assert_test("Auto-expanding textarea is used for input", '<textarea' in html_content and 'id="chatInput"' in html_content)
-    assert_test("Delta polling since_id parameter is implemented", "since_id" in html_content and "lastSeenMsgId" in html_content)
+    assert_test("GET / returns 200 OK", res.status_code == 200)
+    data = res.json()
+    assert_test("API service is 'Our Space API Server 💕'", "Our Space" in data.get("service", ""))
+    assert_test("Frontend URL points to Vercel deployment", "vercel.app" in data.get("frontend", ""))
 
     # --- 2. Room Creation & 4-Digit PIN Generation ---
     print("\n--- 2. Testing Room Creation & PIN Logic ---")

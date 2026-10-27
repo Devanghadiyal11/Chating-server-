@@ -60,13 +60,12 @@ A private, secure, and romantic real-time chat application built exclusively for
 
 ```
 Server/
-├── backend/                  # 1. FastAPI & WebSocket Server
+├── backend/                  # 1. FastAPI & WebSocket Server (Render)
 │   ├── server.py             # App, WebSocket hub, Monotonic seq, MongoDB sync
 │   ├── client.py             # CLI test client
 │   ├── test_app.py           # Test suite
 │   ├── requirements.txt      # Python dependencies
 │   ├── Procfile              # Render deployment configuration
-│   ├── static/               # Legacy static web UI fallback
 │   └── uploads/              # Media attachment storage
 │
 ├── frontend/                 # 2. Next.js 16 Modern Client (Deploy on Vercel)
