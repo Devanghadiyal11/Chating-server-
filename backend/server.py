@@ -465,7 +465,7 @@ def purge_dummy_messages():
         )
     ]
 
-async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int] = None, limit: int = 500) -> List[dict]:
+async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int] = None, limit: int = 2000) -> List[dict]:
     """Load persistent chat history from MongoDB Atlas with in-memory fast fallback."""
     now_ms = int(time.time() * 1000)
 
@@ -479,19 +479,32 @@ async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int]
             }
             if after_seq is not None:
                 query["seq"] = {"$gt": after_seq}
+                cursor = messages_col.find(query, {"_id": 0}).sort([("time_ms", 1), ("seq", 1)]).limit(limit)
+                db_msgs = []
+                async for doc in cursor:
+                    if bool(str(doc.get("content", "")).strip()) or bool(doc.get("image")) or bool(doc.get("audio")):
+                        db_msgs.append(doc)
+                return db_msgs
             elif since_id:
                 since_doc = await messages_col.find_one({"id": since_id}, {"seq": 1, "time_ms": 1})
                 if since_doc and "seq" in since_doc:
                     query["seq"] = {"$gt": since_doc["seq"]}
                 elif since_doc and "time_ms" in since_doc:
                     query["time_ms"] = {"$gt": since_doc["time_ms"]}
-
-            cursor = messages_col.find(query, {"_id": 0}).sort([("time_ms", 1), ("seq", 1)]).limit(limit)
-            db_msgs = []
-            async for doc in cursor:
-                if bool(str(doc.get("content", "")).strip()) or bool(doc.get("image")) or bool(doc.get("audio")):
-                    db_msgs.append(doc)
-            if db_msgs:
+                cursor = messages_col.find(query, {"_id": 0}).sort([("time_ms", 1), ("seq", 1)]).limit(limit)
+                db_msgs = []
+                async for doc in cursor:
+                    if bool(str(doc.get("content", "")).strip()) or bool(doc.get("image")) or bool(doc.get("audio")):
+                        db_msgs.append(doc)
+                return db_msgs
+            else:
+                # Retrieve the most recent messages up to limit in chronological order
+                cursor = messages_col.find(query, {"_id": 0}).sort([("time_ms", -1), ("seq", -1)]).limit(limit)
+                db_msgs = []
+                async for doc in cursor:
+                    if bool(str(doc.get("content", "")).strip()) or bool(doc.get("image")) or bool(doc.get("audio")):
+                        db_msgs.append(doc)
+                db_msgs.reverse()
                 return db_msgs
         except Exception as e:
             print(f"[DB Error] loading messages from MongoDB: {e}")
@@ -509,8 +522,8 @@ async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int]
         idx = next((i for i, m in enumerate(valid_mem) if m.get("id") == since_id), -1)
         if idx != -1:
             valid_mem = valid_mem[idx + 1:]
-    valid_mem.sort(key=lambda x: (x.get("seq", 0), x.get("time_ms", 0), x.get("id", "")))
-    return valid_mem[:limit]
+    valid_mem.sort(key=lambda x: (x.get("time_ms", 0), x.get("seq", 0), x.get("id", "")))
+    return valid_mem[-limit:]
 
 async def save_settings(new_conf: dict):
     settings_cache.update(new_conf)
@@ -731,10 +744,11 @@ async def join_room(req: JoinRequest, request: Request):
 # ─────────────────────────────────────────────
 
 @app.get("/api/messages")
-async def get_messages(since_id: Optional[str] = None, after_seq: Optional[int] = None, username: Optional[str] = None):
+async def get_messages(since_id: Optional[str] = None, after_seq: Optional[int] = None, limit: Optional[int] = 2000, username: Optional[str] = None):
     if username:
         room.touch(username)
-    msgs = await load_messages(since_id=since_id, after_seq=after_seq)
+    safe_limit = min(max(1, limit or 2000), 5000)
+    msgs = await load_messages(since_id=since_id, after_seq=after_seq, limit=safe_limit)
     # Encrypt photos for safe transit across the network
     wire_msgs = []
     for m in msgs:
