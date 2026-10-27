@@ -32,14 +32,6 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 import json
 
-try:
-    import pywebpush
-    from pywebpush import webpush, WebPushException
-    WEBPUSH_AVAILABLE = True
-except Exception as _wp_err:
-    WEBPUSH_AVAILABLE = False
-    print(f"[WebPush] pywebpush not available: {_wp_err}")
-
 import motor.motor_asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Depends, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -70,7 +62,6 @@ COL_MSGS  = "messages"
 COL_CONF  = "settings"
 COL_SESS  = "sessions"
 COL_EVNT  = "events"
-COL_PUSH  = "push_subscriptions"
 
 # ─────────────────────────────────────────────
 # State & Caches
@@ -82,7 +73,6 @@ messages_col = None
 settings_col = None
 sessions_col = None
 events_col = None
-push_col = None
 
 # Active session tokens: token -> {"username": str, "created_at": float}
 active_sessions: Dict[str, dict] = {}
@@ -165,71 +155,6 @@ def check_rate_limit(key: str, max_calls: int = 40, period: float = 10.0) -> boo
     return True
 
 # ─────────────────────────────────────────────
-# Web Push (VAPID) Notification Service
-# ─────────────────────────────────────────────
-VAPID_PUBLIC_KEY = os.getenv(
-    "VAPID_PUBLIC_KEY",
-    "BJk22Ib1jBbs8cP-ingSQWsMCJiGE3nOpX_rX_GnYayhwFAYen-b-nE4HOoagjcUGrtlhRaTB_KpCCCLud2qiZs"
-)
-VAPID_PRIVATE_KEY_DEFAULT = """-----BEGIN PRIVATE KEY-----
-MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg4bSg7ybPC3LKYr5l
-acLnIdDBcKxg9ilGVN6F68NnPy+hRANCAASZNtiG9YwW7PHD/op4EkFrDAiYhhN5
-zqV/61/xp2GsocBQGHp/m/pxOBzqGoI3FBq7ZYUWkwfyqQggi7ndqomb
------END PRIVATE KEY-----"""
-VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", VAPID_PRIVATE_KEY_DEFAULT)
-VAPID_CLAIMS = {"sub": os.getenv("VAPID_CLAIM_SUB", "mailto:devanghadiyal@gmail.com")}
-
-def _sync_send_push(sub_info: dict, payload_str: str) -> bool:
-    if not WEBPUSH_AVAILABLE:
-        return False
-    try:
-        webpush(
-            subscription_info=sub_info,
-            data=payload_str,
-            vapid_private_key=VAPID_PRIVATE_KEY,
-            vapid_claims=VAPID_CLAIMS,
-            ttl=86400
-        )
-        return True
-    except WebPushException as ex:
-        # If client subscription is expired or unregistered (HTTP 404 or 410 Gone), remove it
-        status_code = getattr(getattr(ex, "response", None), "status_code", None)
-        if status_code in (404, 410):
-            endpoint = sub_info.get("endpoint")
-            if endpoint and push_col is not None:
-                try:
-                    asyncio.create_task(push_col.delete_one({"endpoint": endpoint}))
-                except Exception:
-                    pass
-        return False
-    except Exception as e:
-        print(f"[WebPush] send failed: {e}")
-        return False
-
-async def send_push_to_user(recipient_user: str, title: str, body: str, data: Optional[dict] = None):
-    """Deliver real-time push notification to partner's registered phone / browser."""
-    if not WEBPUSH_AVAILABLE or push_col is None:
-        return
-    try:
-        cursor = push_col.find({"user": recipient_user.lower().strip()})
-        subs = await cursor.to_list(length=20)
-        if not subs:
-            return
-        payload = json.dumps({
-            "title": title,
-            "body": body,
-            "icon": "/icon.svg",
-            "badge": "/icon.svg",
-            "data": data or {"url": "/"}
-        })
-        for item in subs:
-            sub_info = item.get("subscription")
-            if sub_info:
-                await asyncio.to_thread(_sync_send_push, sub_info, payload)
-    except Exception as e:
-        print(f"[WebPush] send_push_to_user error: {e}")
-
-# ─────────────────────────────────────────────
 # Background Cleanup
 # ─────────────────────────────────────────────
 
@@ -281,7 +206,7 @@ async def keep_alive_ping():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global mongo_client, db, messages_col, settings_col, sessions_col, events_col, push_col
+    global mongo_client, db, messages_col, settings_col, sessions_col, events_col
     try:
         mongo_client = motor.motor_asyncio.AsyncIOMotorClient(
             MONGO_URI,
@@ -292,7 +217,6 @@ async def lifespan(app: FastAPI):
         settings_col = db[COL_CONF]
         sessions_col = db[COL_SESS]
         events_col = db[COL_EVNT]
-        push_col = db[COL_PUSH]
 
         # Safely create indexes without failing if they already exist
         for idx in ["time_ms", "id", "seq", [("time_ms", 1), ("seq", 1)]]:
@@ -305,11 +229,6 @@ async def lifespan(app: FastAPI):
                 await events_col.create_index(ev_idx)
             except Exception:
                 pass
-        try:
-            await push_col.create_index("endpoint", unique=True)
-            await push_col.create_index("user")
-        except Exception:
-            pass
         print(f"[DB] Connected to MongoDB Atlas - {DB_NAME}")
 
         # Load persisted chat history from MongoDB Atlas into memory cache (last 100 to save RAM)
@@ -793,16 +712,6 @@ class SettingsPayload(BaseModel):
     couple_name: Optional[str] = None
     theme: Optional[str] = None
 
-class PushSubscribePayload(BaseModel):
-    user: str
-    subscription: dict
-
-class PushUnsubscribePayload(BaseModel):
-    endpoint: str
-
-class PushTestPayload(BaseModel):
-    user: str
-
 # ─────────────────────────────────────────────
 # REST API: Authentication & Sessions
 # ─────────────────────────────────────────────
@@ -968,22 +877,6 @@ async def send_message(msg: ChatPayload, request: Request):
     if wire_chat_item.get("image"):
         wire_chat_item["image"] = encrypt_photo(wire_chat_item["image"])
 
-    # Deliver push notification to partner in background
-    try:
-        partner = "her" if msg.sender.lower() == "him" else "him"
-        sender_title = "Him 🤴" if msg.sender.lower() == "him" else "Her 👸"
-        body_preview = "Sent a message 💕"
-        if msg_type == "image":
-            body_preview = "📷 Sent you a live photo moment!"
-        elif msg_type == "audio":
-            dur = int(msg.audio_duration or 0)
-            body_preview = f"🎙️ Sent you a voice note ({dur}s)" if dur else "🎙️ Sent you a voice note"
-        elif msg.content:
-            body_preview = msg.content.strip()[:100]
-        asyncio.create_task(send_push_to_user(partner, f"{sender_title} in Our Space 💕", body_preview, {"url": "/", "type": "message"}))
-    except Exception:
-        pass
-
     return {"status": "ok", "message": wire_chat_item}
 
 @app.post("/api/ack")
@@ -1087,56 +980,7 @@ async def send_nudge(req: NudgePayload):
     }
     room.touch(req.sender)
     await publish_event("nudge.created", req.sender, payload)
-
-    # Deliver push notification to partner
-    try:
-        partner = "her" if req.sender.lower() == "him" else "him"
-        sender_title = "Him 🤴" if req.sender.lower() == "him" else "Her 👸"
-        asyncio.create_task(send_push_to_user(partner, f"{sender_title} 💕", "Thinking of you! 💖", {"url": "/", "type": "nudge"}))
-    except Exception:
-        pass
-
     return {"status": "ok"}
-
-# ─────────────────────────────────────────────
-# Web Push Subscription Endpoints
-# ─────────────────────────────────────────────
-
-@app.get("/api/push/vapid-public-key")
-async def get_vapid_public_key():
-    return {"public_key": VAPID_PUBLIC_KEY}
-
-@app.post("/api/push/subscribe")
-async def subscribe_push(payload: PushSubscribePayload):
-    if push_col is None:
-        raise HTTPException(status_code=503, detail="Database not ready")
-    endpoint = payload.subscription.get("endpoint")
-    if not endpoint:
-        raise HTTPException(status_code=400, detail="Missing subscription endpoint")
-    await push_col.update_one(
-        {"endpoint": endpoint},
-        {
-            "$set": {
-                "user": payload.user.lower().strip(),
-                "subscription": payload.subscription,
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            }
-        },
-        upsert=True
-    )
-    return {"status": "ok", "message": "Push notification subscribed successfully 💕"}
-
-@app.post("/api/push/unsubscribe")
-async def unsubscribe_push(payload: PushUnsubscribePayload):
-    if push_col is not None:
-        await push_col.delete_one({"endpoint": payload.endpoint})
-    return {"status": "ok"}
-
-@app.post("/api/push/test")
-async def test_push(payload: PushTestPayload):
-    user = payload.user.lower().strip()
-    await send_push_to_user(user, "Our Space 💕", "Test notification! Web Push is connected 🥰", {"url": "/"})
-    return {"status": "ok", "message": f"Test push queued for {user}"}
 
 @app.delete("/api/messages/{msg_id}")
 async def delete_single_message(msg_id: str):
@@ -1374,14 +1218,6 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                     "timestamp": datetime.now().strftime("%H:%M"),
                     "time_ms": now_ms
                 })
-
-                # Deliver push notification to partner
-                try:
-                    partner = "her" if username.lower() == "him" else "him"
-                    sender_title = "Him 🤴" if username.lower() == "him" else "Her 👸"
-                    asyncio.create_task(send_push_to_user(partner, f"{sender_title} 💕", "Thinking of you! 💖", {"url": "/", "type": "nudge"}))
-                except Exception:
-                    pass
                 continue
 
             elif msg_type == "delete_message":
@@ -1462,22 +1298,6 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
             await save_message(chat_item)
             room.touch(username)
             await publish_event("message.created", username, chat_item, event_id=f"ev_msg_{chat_item['id']}")
-
-            # Deliver push notification to partner
-            try:
-                partner = "her" if username.lower() == "him" else "him"
-                sender_title = "Him 🤴" if username.lower() == "him" else "Her 👸"
-                body_preview = "Sent a message 💕"
-                if resolved_type == "image":
-                    body_preview = "📷 Sent you a live photo moment!"
-                elif resolved_type == "audio":
-                    dur = int(data.get("audio_duration") or 0)
-                    body_preview = f"🎙️ Sent you a voice note ({dur}s)" if dur else "🎙️ Sent you a voice note"
-                elif content:
-                    body_preview = content[:100]
-                asyncio.create_task(send_push_to_user(partner, f"{sender_title} in Our Space 💕", body_preview, {"url": "/", "type": "message"}))
-            except Exception:
-                pass
 
     except WebSocketDisconnect:
         room.release(username, websocket)
