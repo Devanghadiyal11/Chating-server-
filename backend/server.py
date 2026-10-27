@@ -62,6 +62,7 @@ COL_MSGS  = "messages"
 COL_CONF  = "settings"
 COL_SESS  = "sessions"
 COL_EVNT  = "events"
+COL_IMGS  = "images"
 
 # ─────────────────────────────────────────────
 # State & Caches
@@ -70,6 +71,7 @@ COL_EVNT  = "events"
 mongo_client: Optional[motor.motor_asyncio.AsyncIOMotorClient] = None
 db = None
 messages_col = None
+images_col = None
 settings_col = None
 sessions_col = None
 events_col = None
@@ -206,7 +208,7 @@ async def keep_alive_ping():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global mongo_client, db, messages_col, settings_col, sessions_col, events_col
+    global mongo_client, db, messages_col, images_col, settings_col, sessions_col, events_col
     try:
         mongo_client = motor.motor_asyncio.AsyncIOMotorClient(
             MONGO_URI,
@@ -214,6 +216,7 @@ async def lifespan(app: FastAPI):
         )
         db = mongo_client[DB_NAME]
         messages_col = db[COL_MSGS]
+        images_col = db[COL_IMGS]
         settings_col = db[COL_CONF]
         sessions_col = db[COL_SESS]
         events_col = db[COL_EVNT]
@@ -229,12 +232,18 @@ async def lifespan(app: FastAPI):
                 await events_col.create_index(ev_idx)
             except Exception:
                 pass
+        for img_idx in ["id", "time_ms", "datetime", "soft_deleted"]:
+            try:
+                await images_col.create_index(img_idx)
+            except Exception:
+                pass
         print(f"[DB] Connected to MongoDB Atlas - {DB_NAME}")
 
         # Load persisted chat history from MongoDB Atlas into memory cache (last 100 to save RAM)
         try:
             cursor = messages_col.find(
                 {
+                    "soft_deleted": {"$ne": True},
                     "$or": [
                         {"content": {"$regex": r"\S"}},
                         {"image": {"$ne": None, "$ne": ""}},
@@ -474,6 +483,8 @@ async def save_message(msg: dict):
     if messages_col is not None and msg_id:
         try:
             doc_to_save = {k: v for k, v in msg.items() if k != "_id"}
+            if "soft_deleted" not in doc_to_save:
+                doc_to_save["soft_deleted"] = False
             await messages_col.update_one(
                 {"id": msg_id},
                 {"$set": doc_to_save},
@@ -481,6 +492,30 @@ async def save_message(msg: dict):
             )
         except Exception as e:
             print(f"[DB Error] Saving message to MongoDB: {e}")
+
+    # Persist all photos in a dedicated separate 'images' collection in MongoDB Atlas
+    if images_col is not None and msg.get("image") and msg_id:
+        try:
+            image_record = {
+                "id": msg_id,
+                "clientMessageId": msg.get("clientMessageId") or msg_id,
+                "sender": msg.get("sender", "unknown"),
+                "image": msg["image"],  # Original decrypted form preserved in storage
+                "content": msg.get("content", ""),
+                "time_ms": msg.get("time_ms") or int(time.time() * 1000),
+                "datetime": msg.get("datetime"),
+                "created_at": msg.get("created_at") or msg.get("datetime"),
+                "soft_deleted": False,
+                "cleared_from_chat": False,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+            await images_col.update_one(
+                {"id": msg_id},
+                {"$set": image_record},
+                upsert=True
+            )
+        except Exception as e:
+            print(f"[DB Error] Saving photo to images collection: {e}")
 
 def purge_dummy_messages():
     """Purge any empty/whitespace dummy messages from memory caches."""
@@ -516,6 +551,7 @@ async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int]
     if messages_col is not None:
         try:
             query: Dict[str, Any] = {
+                "soft_deleted": {"$ne": True},
                 "$or": [
                     {"expires_at": None},
                     {"expires_at": {"$gt": now_ms}}
@@ -557,7 +593,8 @@ async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int]
     purge_dummy_messages()
     valid_mem = [
         ensure_msg_datetime(m) for m in memory_messages
-        if not (m.get("expires_at") and m["expires_at"] < now_ms)
+        if not m.get("soft_deleted")
+        and not (m.get("expires_at") and m["expires_at"] < now_ms)
         and (bool(str(m.get("content", "")).strip()) or bool(m.get("image")) or bool(m.get("audio")))
     ]
     if after_seq is not None:
@@ -984,9 +1021,30 @@ async def send_nudge(req: NudgePayload):
 
 @app.delete("/api/messages/{msg_id}")
 async def delete_single_message(msg_id: str):
-    if messages_col is not None:
-        await messages_col.delete_one({"id": msg_id})
     global memory_messages
+    target_msg = next((m for m in memory_messages if m.get("id") == msg_id), None)
+    if not target_msg and messages_col is not None:
+        target_msg = await messages_col.find_one({"id": msg_id})
+
+    # If photo message, soft-delete in images collection so it remains permanently in MongoDB
+    if target_msg and target_msg.get("image") and images_col is not None:
+        try:
+            await images_col.update_one(
+                {"id": msg_id},
+                {"$set": {"soft_deleted": True, "deleted_at": datetime.now(timezone.utc).isoformat()}}
+            )
+        except Exception as e:
+            print(f"[DB Error] Soft-deleting image in images collection: {e}")
+
+    if messages_col is not None:
+        try:
+            if target_msg and target_msg.get("image"):
+                await messages_col.update_one({"id": msg_id}, {"$set": {"soft_deleted": True}})
+            else:
+                await messages_col.delete_one({"id": msg_id})
+        except Exception as e:
+            print(f"[DB Error] Deleting message from messages collection: {e}")
+
     memory_messages = [m for m in memory_messages if m.get("id") != msg_id]
 
     await publish_event("message.deleted", "user", {"msg_id": msg_id})
@@ -994,18 +1052,87 @@ async def delete_single_message(msg_id: str):
 
 @app.delete("/api/messages")
 async def clear_messages():
+    """Clear chat: photos are soft-deleted from chat view but remain permanently stored in MongoDB 'images' collection."""
     global memory_messages, memory_events, recent_msg_ids
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # 1. Archive any in-memory photos to MongoDB 'images' collection
+    if images_col is not None:
+        try:
+            for m in memory_messages:
+                if m.get("image") and m.get("id"):
+                    await images_col.update_one(
+                        {"id": m["id"]},
+                        {"$set": {
+                            "id": m["id"],
+                            "clientMessageId": m.get("clientMessageId") or m["id"],
+                            "sender": m.get("sender", "unknown"),
+                            "image": m["image"],
+                            "content": m.get("content", ""),
+                            "time_ms": m.get("time_ms") or int(time.time() * 1000),
+                            "datetime": m.get("datetime") or now_iso,
+                            "created_at": m.get("created_at") or now_iso,
+                            "soft_deleted": True,
+                            "cleared_from_chat": True,
+                            "cleared_at": now_iso
+                        }},
+                        upsert=True
+                    )
+            # Mark all photos in 'images' collection as soft-deleted from chat view (never physically deleted)
+            await images_col.update_many(
+                {},
+                {"$set": {
+                    "soft_deleted": True,
+                    "cleared_from_chat": True,
+                    "cleared_at": now_iso
+                }}
+            )
+        except Exception as e:
+            print(f"[DB Error] Soft-deleting in images collection: {e}")
+
+    # 2. In messages collection: photo messages are kept as soft_deleted in MongoDB storage, text/audio messages are purged
+    if messages_col is not None:
+        try:
+            await messages_col.update_many(
+                {"image": {"$ne": None, "$ne": ""}},
+                {"$set": {"soft_deleted": True, "cleared_from_chat": True, "cleared_at": now_iso}}
+            )
+            await messages_col.delete_many({
+                "$or": [
+                    {"image": None},
+                    {"image": ""}
+                ]
+            })
+        except Exception as e:
+            print(f"[DB Error] Soft-deleting messages in messages collection: {e}")
+
     memory_messages = []
     memory_events = []
     recent_msg_ids = set()
-    if messages_col is not None:
-        try:
-            await messages_col.delete_many({})
-        except Exception:
-            pass
 
     await publish_event("chat.cleared", "system", {"timestamp": datetime.now().strftime("%H:%M")})
-    return {"status": "cleared"}
+    return {"status": "cleared", "photos_soft_deleted_and_stored": True}
+
+@app.get("/api/images")
+async def get_all_images(include_cleared: bool = True):
+    """Retrieve all preserved photos from the dedicated MongoDB 'images' collection."""
+    if images_col is None:
+        return {"images": []}
+    try:
+        query: Dict[str, Any] = {}
+        if not include_cleared:
+            query = {"soft_deleted": {"$ne": True}}
+        cursor = images_col.find(query, {"_id": 0}).sort([("time_ms", -1), ("datetime", -1)]).limit(1000)
+        imgs = []
+        async for doc in cursor:
+            item = dict(doc)
+            if item.get("image"):
+                item["image"] = encrypt_photo(item["image"])
+            imgs.append(item)
+        return {"images": imgs}
+    except Exception as e:
+        print(f"[DB Error] get_all_images: {e}")
+        return {"images": []}
 
 # ─────────────────────────────────────────────
 # REST API: Event Stream & Catch-up Recovery
