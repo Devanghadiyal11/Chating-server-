@@ -7,7 +7,7 @@ A private, secure, and romantic real-time chat application built exclusively for
 ## 🌟 Key Features
 
 ### 1. 🔒 Dedicated 2-Person Sanctuary
-- **Hardcoded Secret PIN (`1012`):** Only you and your girlfriend can enter.
+- **Private Secret PIN:** Only you and your partner can enter with your private access passcode.
 - **Strict 2-User Capacity:** Any third party attempting to join is blocked (`403 Forbidden`).
 - **1-Tap Direct Invite Link:** Pre-fills the secret PIN so your partner can join instantly from her phone without typing credentials.
 - **Auto-Login & "Remember Me":** Seamlessly re-opens straight into your conversation whenever you visit the app.
