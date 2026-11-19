@@ -94,7 +94,10 @@ settings_cache: Dict[str, Any] = {
     "anniversary_date": "2024-02-14",
     "disappearing_mode": 0,
     "couple_name": "Our Sweet Space 💕",
-    "theme": "rose"
+    "theme": "rose",
+    "cleared_at_ms": 0,
+    "cleared_before_seq": 0,
+    "cleared_at_iso": None,
 }
 
 # In-memory fallbacks & fast lookup caches
@@ -240,19 +243,27 @@ async def lifespan(app: FastAPI):
                 pass
         print(f"[DB] Connected to MongoDB Atlas - {DB_NAME}")
 
-        # Load persisted chat history from MongoDB Atlas into memory cache (last 100 to save RAM)
+        # 1. Load persisted settings first (including chat-clear boundary)
+        stored_conf = await settings_col.find_one({"_id": "couple_settings"}, {"_id": 0})
+        if stored_conf:
+            settings_cache.update(stored_conf)
+
+        cleared_seq = settings_cache.get("cleared_before_seq", 0)
+        cleared_ms = settings_cache.get("cleared_at_ms", 0)
+
+        # 2. Load post-clear chat history into memory cache (last 100 to save RAM)
         try:
-            cursor = messages_col.find(
-                {
-                    "soft_deleted": {"$ne": True},
-                    "$or": [
-                        {"content": {"$regex": r"\S"}},
-                        {"image": {"$ne": None, "$ne": ""}},
-                        {"audio": {"$ne": None, "$ne": ""}}
-                    ]
-                },
-                {"_id": 0}
-            ).sort([("time_ms", -1), ("seq", -1)]).limit(100)
+            msg_query: Dict[str, Any] = {
+                "soft_deleted": {"$ne": True},
+                "seq": {"$gt": cleared_seq},
+                "time_ms": {"$gt": cleared_ms},
+                "$or": [
+                    {"content": {"$regex": r"\S"}},
+                    {"image": {"$ne": None, "$ne": ""}},
+                    {"audio": {"$ne": None, "$ne": ""}}
+                ]
+            }
+            cursor = messages_col.find(msg_query, {"_id": 0}).sort([("time_ms", -1), ("seq", -1)]).limit(100)
 
             loaded_msgs = []
             async for doc in cursor:
@@ -263,14 +274,9 @@ async def lifespan(app: FastAPI):
                     recent_msg_ids.add(doc["clientMessageId"])
             loaded_msgs.reverse()
             memory_messages.extend(loaded_msgs)
-            print(f"[DB] Restored {len(loaded_msgs)} recent messages into memory cache.")
+            print(f"[DB] Restored {len(loaded_msgs)} recent messages into memory cache (cleared_seq={cleared_seq}).")
         except Exception as e:
             print(f"[DB Restore Warning] {e}")
-
-        # Load persisted settings
-        stored_conf = await settings_col.find_one({"_id": "couple_settings"}, {"_id": 0})
-        if stored_conf:
-            settings_cache.update(stored_conf)
 
         # Initialize atomic in-memory sequence counter from DB
         try:
@@ -457,11 +463,18 @@ async def save_message(msg: dict):
         msg["datetime"] = datetime.fromtimestamp(msg["time_ms"] / 1000.0, tz=timezone.utc).isoformat()
     if not msg.get("created_at"):
         msg["created_at"] = msg["datetime"]
-    # Sequence for every chat using time
+    # Monotonic sequence
     if not msg.get("seq"):
         msg["seq"] = get_next_seq()
     if not msg.get("time"):
         msg["time"] = datetime.now().strftime("%I:%M %p")
+
+    cleared_seq = settings_cache.get("cleared_before_seq", 0)
+    cleared_ms = settings_cache.get("cleared_at_ms", 0)
+    is_pre_clear = (msg.get("seq", 0) <= cleared_seq) or (msg.get("time_ms", 0) <= cleared_ms)
+    if is_pre_clear:
+        msg["soft_deleted"] = True
+        msg["cleared_from_chat"] = True
 
     msg_id = msg.get("id")
     if msg_id:
@@ -471,11 +484,14 @@ async def save_message(msg: dict):
     if len(recent_msg_ids) > 4000:
         recent_msg_ids.clear()
 
-    # Deduplicate in memory
+    # Deduplicate in memory (only post-clear messages stay in active memory)
     existing_idx = next((i for i, m in enumerate(memory_messages) if m.get("id") == msg_id), -1)
     if existing_idx >= 0:
-        memory_messages[existing_idx] = msg
-    else:
+        if is_pre_clear:
+            memory_messages.pop(existing_idx)
+        else:
+            memory_messages[existing_idx] = msg
+    elif not is_pre_clear:
         memory_messages.append(msg)
     if len(memory_messages) > 150:
         memory_messages.pop(0)
@@ -568,32 +584,34 @@ def ensure_msg_datetime(doc: dict) -> dict:
     return doc
 
 async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int] = None, limit: int = 2000) -> List[dict]:
-    """Load persistent chat history from MongoDB Atlas with in-memory fast fallback."""
+    """Load persistent chat history from MongoDB Atlas with in-memory fast fallback, strictly respecting chat-clear boundary."""
     now_ms = int(time.time() * 1000)
+    cleared_seq = settings_cache.get("cleared_before_seq", 0)
+    cleared_ms = settings_cache.get("cleared_at_ms", 0)
+
+    effective_after_seq = cleared_seq
+    if after_seq is not None:
+        effective_after_seq = max(cleared_seq, after_seq)
 
     if messages_col is not None:
         try:
             query: Dict[str, Any] = {
                 "soft_deleted": {"$ne": True},
+                "seq": {"$gt": effective_after_seq},
+                "time_ms": {"$gt": cleared_ms},
                 "$or": [
                     {"expires_at": None},
                     {"expires_at": {"$gt": now_ms}}
                 ]
             }
-            if after_seq is not None:
-                query["seq"] = {"$gt": after_seq}
-                cursor = messages_col.find(query, {"_id": 0}).sort([("time_ms", 1), ("seq", 1)]).limit(limit)
-                db_msgs = []
-                async for doc in cursor:
-                    if bool(str(doc.get("content", "")).strip()) or bool(doc.get("image")) or bool(doc.get("audio")):
-                        db_msgs.append(ensure_msg_datetime(doc))
-                return db_msgs
-            elif since_id:
+            if since_id:
                 since_doc = await messages_col.find_one({"id": since_id}, {"seq": 1, "time_ms": 1})
                 if since_doc and "seq" in since_doc:
-                    query["seq"] = {"$gt": since_doc["seq"]}
+                    query["seq"] = {"$gt": max(effective_after_seq, since_doc["seq"])}
                 elif since_doc and "time_ms" in since_doc:
-                    query["time_ms"] = {"$gt": since_doc["time_ms"]}
+                    query["time_ms"] = {"$gt": max(cleared_ms, since_doc["time_ms"])}
+
+            if after_seq is not None or since_id:
                 cursor = messages_col.find(query, {"_id": 0}).sort([("time_ms", 1), ("seq", 1)]).limit(limit)
                 db_msgs = []
                 async for doc in cursor:
@@ -601,7 +619,7 @@ async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int]
                         db_msgs.append(ensure_msg_datetime(doc))
                 return db_msgs
             else:
-                # Retrieve the most recent messages up to limit in chronological order
+                # Retrieve the most recent post-clear messages up to limit in chronological order
                 cursor = messages_col.find(query, {"_id": 0}).sort([("time_ms", -1), ("seq", -1)]).limit(limit)
                 db_msgs = []
                 async for doc in cursor:
@@ -617,12 +635,12 @@ async def load_messages(since_id: Optional[str] = None, after_seq: Optional[int]
     valid_mem = [
         ensure_msg_datetime(m) for m in memory_messages
         if not m.get("soft_deleted")
+        and m.get("seq", 0) > effective_after_seq
+        and m.get("time_ms", 0) > cleared_ms
         and not (m.get("expires_at") and m["expires_at"] < now_ms)
         and (bool(str(m.get("content", "")).strip()) or bool(m.get("image")) or bool(m.get("audio")))
     ]
-    if after_seq is not None:
-        valid_mem = [m for m in valid_mem if m.get("seq", 0) > after_seq]
-    elif since_id:
+    if since_id:
         idx = next((i for i, m in enumerate(valid_mem) if m.get("id") == since_id), -1)
         if idx != -1:
             valid_mem = valid_mem[idx + 1:]
@@ -729,11 +747,13 @@ async def publish_event(
         })
     elif event_type == "chat.cleared":
         await room.broadcast({
-            "type": "system",
+            "type": "chat_cleared",
             "sender": "System",
             "content": "Chat history cleared. 🗑️",
             "timestamp": payload.get("timestamp", datetime.now().strftime("%H:%M")),
             "time_ms": now_ms,
+            "cleared_at_ms": payload.get("cleared_at_ms"),
+            "cleared_before_seq": payload.get("cleared_before_seq"),
             "id": f"m_{int(time.time()*1000)}_clear"
         })
 
@@ -771,6 +791,8 @@ class SettingsPayload(BaseModel):
     disappearing_mode: Optional[int] = None
     couple_name: Optional[str] = None
     theme: Optional[str] = None
+    cleared_at_ms: Optional[int] = None
+    cleared_before_seq: Optional[int] = None
 
 # ─────────────────────────────────────────────
 # REST API: Authentication & Sessions
@@ -873,7 +895,11 @@ async def get_messages(since_id: Optional[str] = None, after_seq: Optional[int] 
             wire_msgs.append(m_wire)
         else:
             wire_msgs.append(m)
-    return {"messages": wire_msgs}
+    return {
+        "messages": wire_msgs,
+        "cleared_at_ms": settings_cache.get("cleared_at_ms", 0),
+        "cleared_before_seq": settings_cache.get("cleared_before_seq", 0)
+    }
 
 @app.post("/api/send")
 async def send_message(msg: ChatPayload, request: Request):
@@ -888,6 +914,11 @@ async def send_message(msg: ChatPayload, request: Request):
 
     message_id = msg.msg_id or msg.clientMessageId or f"m_{int(time.time()*1000)}_{random.randint(100, 999)}"
     now_ms = get_monotonic_time_ms()
+    msg_seq = get_next_seq()
+
+    cleared_seq = settings_cache.get("cleared_before_seq", 0)
+    cleared_ms = settings_cache.get("cleared_at_ms", 0)
+    is_pre_clear = (msg_seq <= cleared_seq) or (now_ms <= cleared_ms) or (msg.time_ms and msg.time_ms <= cleared_ms)
 
     # If incoming image from network is encrypted, decrypt to store original form in MongoDB
     raw_image = msg.image
@@ -921,6 +952,7 @@ async def send_message(msg: ChatPayload, request: Request):
         "reply_to": msg.reply_to,
         "timestamp": datetime.now().strftime("%H:%M"),
         "time_ms": now_ms,
+        "seq": msg_seq,
         "datetime": now_iso,
         "created_at": now_iso,
         "expires_at": expires_at,
@@ -928,10 +960,17 @@ async def send_message(msg: ChatPayload, request: Request):
         "reactions": {}
     }
 
-    # Store in memory & MongoDB in original form, broadcast to WebSocket
+    if is_pre_clear:
+        chat_item["soft_deleted"] = True
+        chat_item["cleared_from_chat"] = True
+
+    # Store in memory & MongoDB in original form
     await save_message(chat_item)
     room.touch(msg.sender)
-    await publish_event("message.created", msg.sender, chat_item, event_id=f"ev_msg_{chat_item['id']}")
+
+    # Only broadcast to live conversation if created after clear boundary
+    if not is_pre_clear:
+        await publish_event("message.created", msg.sender, chat_item, event_id=f"ev_msg_{chat_item['id']}")
 
     wire_chat_item = dict(chat_item)
     if wire_chat_item.get("image"):
@@ -1076,10 +1115,32 @@ async def delete_single_message(msg_id: str):
 @app.delete("/api/messages")
 async def clear_messages():
     """Clear chat: photos are soft-deleted from chat view but remain permanently stored in MongoDB 'images' collection."""
-    global memory_messages, memory_events, recent_msg_ids
+    global memory_messages, memory_events, memory_images, recent_msg_ids
     now_iso = datetime.now(timezone.utc).isoformat()
+    clear_time_ms = get_monotonic_time_ms()
+    clear_seq = get_next_seq()
 
-    # 1. Archive any in-memory photos to MongoDB 'images' collection
+    # 1. Update and persist server-controlled chat clear boundary
+    settings_cache["cleared_at_ms"] = clear_time_ms
+    settings_cache["cleared_before_seq"] = clear_seq
+    settings_cache["cleared_at_iso"] = now_iso
+
+    if settings_col is not None:
+        try:
+            await settings_col.update_one(
+                {"_id": "couple_settings"},
+                {"$set": {
+                    "cleared_at_ms": clear_time_ms,
+                    "cleared_before_seq": clear_seq,
+                    "cleared_at_iso": now_iso
+                }},
+                upsert=True
+            )
+        except Exception as e:
+            print(f"[DB Error] Saving clear boundary to couple_settings: {e}")
+            raise HTTPException(status_code=500, detail="Failed to persist chat-clear boundary in database")
+
+    # 2. Archive any in-memory photos to MongoDB 'images' collection
     if images_col is not None:
         try:
             for m in memory_messages:
@@ -1113,7 +1174,7 @@ async def clear_messages():
         except Exception as e:
             print(f"[DB Error] Soft-deleting in images collection: {e}")
 
-    # 2. In messages collection: photo messages are kept as soft_deleted in MongoDB storage, text/audio messages are purged
+    # 3. In messages collection: photo messages are kept as soft_deleted in MongoDB storage, text/audio messages are purged
     if messages_col is not None:
         try:
             await messages_col.update_many(
@@ -1123,21 +1184,61 @@ async def clear_messages():
             await messages_col.delete_many({
                 "$or": [
                     {"image": None},
-                    {"image": ""}
+                    {"image": ""},
+                    {"seq": {"$lte": clear_seq}},
+                    {"time_ms": {"$lte": clear_time_ms}}
                 ]
             })
         except Exception as e:
             print(f"[DB Error] Soft-deleting messages in messages collection: {e}")
 
+    # 4. In events collection: delete old message.created events before clear_seq so catch-up sync (/api/events) never replays them
+    if events_col is not None:
+        try:
+            await events_col.delete_many({
+                "type": "message.created",
+                "$or": [
+                    {"seq": {"$lte": clear_seq}},
+                    {"createdAt": {"$lte": clear_time_ms}}
+                ]
+            })
+        except Exception as e:
+            print(f"[DB Error] Purging events in events collection: {e}")
+
+    # 5. Clear active-message in-memory caches
     memory_messages = []
-    memory_events = []
     recent_msg_ids = set()
+    memory_events = [
+        ev for ev in memory_events
+        if ev.get("type") != "message.created"
+        or (ev.get("seq", 0) > clear_seq and ev.get("createdAt", 0) > clear_time_ms)
+    ]
     for im in memory_images:
         im["soft_deleted"] = True
         im["cleared_from_chat"] = True
 
-    await publish_event("chat.cleared", "system", {"timestamp": datetime.now().strftime("%H:%M")})
-    return {"status": "cleared", "photos_soft_deleted_and_stored": True}
+    clear_payload = {
+        "cleared_at_ms": clear_time_ms,
+        "cleared_before_seq": clear_seq,
+        "cleared_at_iso": now_iso,
+        "timestamp": datetime.now().strftime("%H:%M")
+    }
+
+    # 6. Broadcast chat.cleared event
+    await publish_event("chat.cleared", "system", clear_payload)
+
+    # Also broadcast direct chat_cleared type for backward compatibility
+    await room.broadcast({
+        "type": "chat_cleared",
+        **clear_payload
+    })
+
+    return {
+        "status": "cleared",
+        "cleared_at_ms": clear_time_ms,
+        "cleared_before_seq": clear_seq,
+        "photos_soft_deleted_and_stored": True
+    }
 
 @app.get("/api/images")
 async def get_all_images(include_cleared: bool = True):
@@ -1175,26 +1276,39 @@ async def get_all_images(include_cleared: bool = True):
 
 @app.get("/api/events")
 async def get_events(after_seq: Optional[int] = None, limit: int = 250):
-    """Retrieve event catch-up stream from MongoDB Atlas or memory cache."""
+    """Retrieve event catch-up stream from MongoDB Atlas or memory cache, strictly respecting chat-clear boundary."""
     purge_dummy_messages()
     limit = min(max(1, limit), 500)
+    cleared_seq = settings_cache.get("cleared_before_seq", 0)
+    cleared_ms = settings_cache.get("cleared_at_ms", 0)
+
+    effective_after_seq = max(cleared_seq, after_seq if after_seq is not None else 0)
 
     raw_evs = []
     if events_col is not None:
         try:
-            q: Dict[str, Any] = {}
-            if after_seq is not None:
-                q["seq"] = {"$gt": after_seq}
+            q: Dict[str, Any] = {
+                "seq": {"$gt": effective_after_seq},
+                "createdAt": {"$gt": cleared_ms}
+            }
             ev_cursor = events_col.find(q, {"_id": 0}).sort("seq", 1).limit(limit)
             async for ev in ev_cursor:
+                if ev.get("type") == "message.created":
+                    payload = ev.get("payload") or {}
+                    if payload.get("seq", 0) <= cleared_seq or payload.get("time_ms", 0) <= cleared_ms:
+                        continue
                 raw_evs.append(ev)
         except Exception as e:
             print(f"[DB Error] loading events: {e}")
 
     if not raw_evs:
         mem = memory_events
-        if after_seq is not None:
-            mem = [ev for ev in mem if ev.get("seq", 0) > after_seq]
+        mem = [
+            ev for ev in mem
+            if ev.get("seq", 0) > effective_after_seq
+            and ev.get("createdAt", 0) > cleared_ms
+            and not (ev.get("type") == "message.created" and ((ev.get("payload", {}).get("seq", 0) <= cleared_seq) or (ev.get("payload", {}).get("time_ms", 0) <= cleared_ms)))
+        ]
         raw_evs = sorted(mem, key=lambda x: x.get("seq", 0))[:limit]
 
     # Encrypt photo payloads for wire transmission
@@ -1209,7 +1323,11 @@ async def get_events(after_seq: Optional[int] = None, limit: int = 250):
         else:
             wire_evs.append(ev)
 
-    return {"events": wire_evs}
+    return {
+        "events": wire_evs,
+        "cleared_at_ms": cleared_ms,
+        "cleared_before_seq": cleared_seq
+    }
 
 @app.get("/api/purge_dummies")
 @app.post("/api/purge_dummies")
@@ -1247,6 +1365,10 @@ async def update_settings(payload: SettingsPayload):
         updates["couple_name"] = payload.couple_name
     if payload.theme is not None:
         updates["theme"] = payload.theme
+    if payload.cleared_at_ms is not None:
+        updates["cleared_at_ms"] = payload.cleared_at_ms
+    if payload.cleared_before_seq is not None:
+        updates["cleared_before_seq"] = payload.cleared_before_seq
 
     if updates:
         await save_settings(updates)
@@ -1422,6 +1544,11 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                 continue
 
             now_ms = get_monotonic_time_ms()
+            msg_seq = get_next_seq()
+
+            cleared_seq = settings_cache.get("cleared_before_seq", 0)
+            cleared_ms = settings_cache.get("cleared_at_ms", 0)
+            is_pre_clear = (msg_seq <= cleared_seq) or (now_ms <= cleared_ms) or (data.get("time_ms") and data["time_ms"] <= cleared_ms)
 
             resolved_type = "chat"
             if image:
@@ -1449,6 +1576,7 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                 "reply_to": data.get("reply_to"),
                 "timestamp": datetime.now().strftime("%H:%M"),
                 "time_ms": now_ms,
+                "seq": msg_seq,
                 "datetime": now_iso,
                 "created_at": now_iso,
                 "expires_at": expires_at,
@@ -1456,10 +1584,16 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                 "reactions": {}
             }
 
+            if is_pre_clear:
+                chat_item["soft_deleted"] = True
+                chat_item["cleared_from_chat"] = True
+
             # Save to MongoDB first
             await save_message(chat_item)
             room.touch(username)
-            await publish_event("message.created", username, chat_item, event_id=f"ev_msg_{chat_item['id']}")
+
+            if not is_pre_clear:
+                await publish_event("message.created", username, chat_item, event_id=f"ev_msg_{chat_item['id']}")
 
     except WebSocketDisconnect:
         room.release(username, websocket)

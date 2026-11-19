@@ -1,7 +1,7 @@
 """
 Comprehensive Automated Test Suite for Our Space Couple Chat Server
 Tests REST API, Couple Authentication, WebSockets, Photo Vault, Soft-Deletion,
-Reactions, Nudges, Settings, and Clean Chat Logic.
+Reactions, Nudges, Settings, Chat-Clear Boundaries, and Reconnection Logic.
 """
 
 import os
@@ -9,7 +9,7 @@ import sys
 import json
 import time
 from starlette.testclient import TestClient
-from server import app, room, PRIVATE_PIN
+from server import app, room, PRIVATE_PIN, settings_cache
 
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -34,6 +34,9 @@ def run_tests():
             print(f"  [+] PASS: {name}")
         else:
             print(f"  [-] FAIL: {name} - {details}")
+
+    # Clean initial state
+    client.delete("/api/messages")
 
     # --- 1. Root & Health API Status ---
     print("\n--- 1. Testing API Root & Health Endpoints ---")
@@ -138,8 +141,8 @@ def run_tests():
     res_nudge = client.post("/api/nudge", json={"sender": "Him"})
     assert_test("Him sends Love Ping / Nudge", res_nudge.status_code == 200 and res_nudge.json().get("status") == "ok")
 
-    # --- 7. Dedicated Photo Vault & Soft-Deletion ---
-    print("\n--- 7. Testing Photo Vault & Soft-Deletion on Clear Chat ---")
+    # --- 7. Dedicated Photo Vault & Chat Clear Boundary ---
+    print("\n--- 7. Testing Photo Vault & Server-Controlled Clear Boundary ---")
     # Verify photo exists in Vault
     res_vault_before = client.get("/api/images?include_cleared=true")
     assert_test("GET /api/images returns photo in Vault", res_vault_before.status_code == 200)
@@ -148,20 +151,67 @@ def run_tests():
 
     # Clear chat
     res_clear = client.delete("/api/messages")
-    assert_test("DELETE /api/messages clears chat stream", res_clear.status_code == 200 and res_clear.json().get("photos_soft_deleted_and_stored") is True)
+    assert_test("DELETE /api/messages returns 200 with clear boundary", res_clear.status_code == 200 and res_clear.json().get("photos_soft_deleted_and_stored") is True)
+    clear_data = res_clear.json()
+    clear_seq = clear_data.get("cleared_before_seq")
+    clear_ms = clear_data.get("cleared_at_ms")
+    assert_test("Clear response contains valid boundary sequence & timestamp", clear_seq is not None and clear_seq > 0 and clear_ms is not None and clear_ms > 0)
 
-    # Chat stream should now be empty
+    # Chat stream should now be completely empty
     res_msgs_after = client.get("/api/messages")
     msgs_after = res_msgs_after.json().get("messages", [])
     assert_test("Chat stream is now empty (0 messages)", len(msgs_after) == 0)
+    assert_test("GET /api/messages returns updated clear boundary", res_msgs_after.json().get("cleared_before_seq") == clear_seq)
+
+    # Catch-up events (/api/events?after_seq=0) MUST NOT leak cleared messages
+    res_ev_after = client.get("/api/events?after_seq=0")
+    assert_test("GET /api/events returns 200 OK", res_ev_after.status_code == 200)
+    ev_list = res_ev_after.json().get("events", [])
+    has_cleared_msg_events = any(e.get("type") == "message.created" for e in ev_list)
+    assert_test("GET /api/events?after_seq=0 does NOT return cleared message.created events", not has_cleared_msg_events)
 
     # Vault STILL preserves photos because of soft-deletion
     res_vault_after = client.get("/api/images?include_cleared=true")
     imgs_after = res_vault_after.json().get("images", [])
     assert_test("Photo Vault STILL contains photos after clear chat (soft-deleted)", len(imgs_after) >= 1)
 
-    # --- 8. WebSocket Connection Lifecycle ---
-    print("\n--- 8. Testing WebSocket Lifecycle (Ping/Pong, Presence, Messages) ---")
+    # --- 8. Post-Clear Sending & Non-Reappearance ---
+    print("\n--- 8. Testing Post-Clear New Message Sending & Non-Reappearance ---")
+    msg4_payload = {
+        "msg_id": "test_msg_post_clear",
+        "sender": "Him",
+        "content": "A brand new start after clear! ✨"
+    }
+    res_msg4 = client.post("/api/send", json=msg4_payload)
+    assert_test("Him sends new message post-clear", res_msg4.status_code == 200 and res_msg4.json().get("status") == "ok")
+
+    # Fetch messages again: MUST show ONLY the new message, never old messages
+    res_msgs_new = client.get("/api/messages")
+    msgs_new = res_msgs_new.json().get("messages", [])
+    assert_test("Active chat conversation contains exactly 1 message", len(msgs_new) == 1)
+    assert_test("Active chat message is the new post-clear message", msgs_new[0]["content"] == "A brand new start after clear! ✨")
+
+    # Old delta query (e.g. asking for since_id=test_msg_1) MUST NOT resurrect cleared messages
+    res_stale_delta = client.get("/api/messages?since_id=test_msg_1")
+    stale_delta_msgs = res_stale_delta.json().get("messages", [])
+    assert_test("Stale delta query returns ONLY post-clear message", len(stale_delta_msgs) == 1 and stale_delta_msgs[0]["id"] == "test_msg_post_clear")
+
+    # --- 9. Multiple Clear Operations in Succession ---
+    print("\n--- 9. Testing Multiple Clear Operations in Succession ---")
+    res_clear2 = client.delete("/api/messages")
+    clear_seq2 = res_clear2.json().get("cleared_before_seq")
+    assert_test("Second clear succeeds with strictly monotonic boundary", clear_seq2 > clear_seq)
+
+    res_msgs_after2 = client.get("/api/messages")
+    assert_test("Chat is empty after second clear", len(res_msgs_after2.json().get("messages", [])) == 0)
+
+    # Send after second clear
+    client.post("/api/send", json={"msg_id": "msg_final", "sender": "Her", "content": "Clean state confirmed!"})
+    res_msgs_final = client.get("/api/messages")
+    assert_test("Only message sent after second clear appears", len(res_msgs_final.json().get("messages", [])) == 1 and res_msgs_final.json().get("messages", [])[0]["id"] == "msg_final")
+
+    # --- 10. WebSocket Connection Lifecycle ---
+    print("\n--- 10. Testing WebSocket Lifecycle (Ping/Pong, Presence, Messages) ---")
     try:
         with client.websocket_connect("/ws/Him") as ws:
             # Drain initial handshake events (users_update, theme_update, settings_update)
