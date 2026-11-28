@@ -246,6 +246,152 @@ def run_tests():
     except Exception as e:
         assert_test("WebSocket lifecycle", False, str(e))
 
+    # --- 11. TURN Credentials & WebRTC Call Signaling State Machine ---
+    print("\n--- 11. Testing TURN Credentials & WebRTC Call Signaling ---")
+    res_turn_unauth = client.get("/api/turn-credentials")
+    assert_test("GET /api/turn-credentials without auth returns 401", res_turn_unauth.status_code == 401)
+
+    him_token = him_data.get("token", "")
+    her_token = res_her.json().get("token", "")
+    res_turn_ok = client.get("/api/turn-credentials", headers={"Authorization": f"Bearer {him_token}"})
+    assert_test(
+        "GET /api/turn-credentials with valid token returns 200 and iceServers",
+        res_turn_ok.status_code == 200 and len(res_turn_ok.json().get("iceServers", [])) >= 1,
+    )
+
+    try:
+        # 1) Offline partner -> call_unavailable
+        with client.websocket_connect(f"/ws/Him?token={him_token}") as ws_him:
+            for _ in range(3):
+                ws_him.receive_json()
+            ws_him.send_json({
+                "type": "call_initiate",
+                "call_id": "call_offline_1",
+                "receiver": "Her",
+                "call_type": "video",
+                "payload": {},
+            })
+            unavail = ws_him.receive_json()
+            assert_test(
+                "call_initiate when partner is offline returns call_unavailable",
+                unavail.get("type") == "call_unavailable",
+                f"Got {unavail}",
+            )
+
+        # 2) Full Him <-> Her signaling lifecycle + security checks
+        with client.websocket_connect(f"/ws/Him?token={him_token}") as ws_him:
+            for _ in range(3):
+                ws_him.receive_json()
+            with client.websocket_connect(f"/ws/Her?token={her_token}") as ws_her:
+                # Drain Her's 3 handshake msgs + Him's partner_online/users_update
+                for _ in range(3):
+                    ws_her.receive_json()
+                ws_him.receive_json()  # users_update
+                ws_him.receive_json()  # partner_online
+
+                # Initiate
+                ws_him.send_json({
+                    "type": "call_initiate",
+                    "call_id": "call_live_1",
+                    "sender": "SpoofedUser",
+                    "receiver": "Her",
+                    "call_type": "video",
+                    "payload": {},
+                })
+                her_init = ws_her.receive_json()
+                assert_test(
+                    "call_initiate relays to Her with server-enforced sender='Him'",
+                    her_init.get("type") == "call_initiate" and her_init.get("sender") == "Him" and her_init.get("call_id") == "call_live_1",
+                )
+
+                # Simultaneous initiate from Her -> call_busy
+                ws_her.send_json({
+                    "type": "call_initiate",
+                    "call_id": "call_live_2",
+                    "receiver": "Him",
+                    "call_type": "audio",
+                    "payload": {},
+                })
+                her_busy = ws_her.receive_json()
+                assert_test("Simultaneous call_initiate returns call_busy", her_busy.get("type") == "call_busy")
+
+                # Accept
+                ws_her.send_json({
+                    "type": "call_accept",
+                    "call_id": "call_live_1",
+                    "receiver": "Him",
+                    "call_type": "video",
+                    "payload": {},
+                })
+                him_accept = ws_him.receive_json()
+                assert_test("call_accept relays to Him", him_accept.get("type") == "call_accept")
+
+                # Duplicate accept -> call_error
+                ws_her.send_json({
+                    "type": "call_accept",
+                    "call_id": "call_live_1",
+                    "receiver": "Him",
+                    "call_type": "video",
+                    "payload": {},
+                })
+                dup_err = ws_her.receive_json()
+                assert_test("Duplicate call_accept rejected with call_error", dup_err.get("type") == "call_error")
+
+                # Offer / Answer / ICE
+                ws_him.send_json({
+                    "type": "call_offer",
+                    "call_id": "call_live_1",
+                    "call_type": "video",
+                    "payload": {"sdp": {"type": "offer", "sdp": "v=0..."}},
+                })
+                her_offer = ws_her.receive_json()
+                assert_test("call_offer relays to Her", her_offer.get("type") == "call_offer")
+
+                ws_her.send_json({
+                    "type": "call_answer",
+                    "call_id": "call_live_1",
+                    "call_type": "video",
+                    "payload": {"sdp": {"type": "answer", "sdp": "v=0..."}},
+                })
+                him_answer = ws_him.receive_json()
+                assert_test("call_answer relays to Him", him_answer.get("type") == "call_answer")
+
+                ws_him.send_json({
+                    "type": "ice_candidate",
+                    "call_id": "call_live_1",
+                    "call_type": "video",
+                    "payload": {"candidate": {"candidate": "candidate:1 1 UDP 2122252543 192.0.2.1 5000 typ host"}},
+                })
+                her_ice = ws_her.receive_json()
+                assert_test("ice_candidate relays to Her", her_ice.get("type") == "ice_candidate")
+
+                # End call
+                ws_him.send_json({
+                    "type": "call_end",
+                    "call_id": "call_live_1",
+                    "call_type": "video",
+                    "payload": {"reason": "hangup"},
+                })
+                her_end = ws_her.receive_json()
+                assert_test("call_end relays to Her", her_end.get("type") == "call_end")
+
+                # Stale call_id after call_end -> call_error
+                ws_her.send_json({
+                    "type": "call_offer",
+                    "call_id": "call_live_1",
+                    "call_type": "video",
+                    "payload": {"sdp": {"type": "offer", "sdp": "v=0..."}},
+                })
+                stale_err = ws_her.receive_json()
+                assert_test("Stale call_id after call_end rejected with call_error", stale_err.get("type") == "call_error")
+
+        # Confirm zero call records persisted in messages
+        msgs_check = client.get("/api/messages").json().get("messages", [])
+        has_call_msgs = any(str(m.get("type", "")).startswith("call_") for m in msgs_check)
+        assert_test("No call records persisted in messages", not has_call_msgs)
+    except Exception as e:
+        assert_test("WebRTC signaling tests", False, str(e))
+
     # --- Clean up after test ---
     client.delete("/api/messages")
 

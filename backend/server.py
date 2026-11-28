@@ -26,6 +26,8 @@ import time
 import secrets
 import base64
 import hashlib
+import hmac
+import requests
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -107,6 +109,19 @@ memory_messages: List[dict] = []
 memory_events: List[dict] = []
 memory_images: List[dict] = []
 recent_msg_ids: set = set()
+
+# ─────────────────────────────────────────────
+# Ephemeral In-Memory Call State (No DB Persistence)
+# NOTE: Single-instance requirement — active_call is stored in process memory
+# for a single Render instance. Multi-worker / multi-instance deployments would
+# require an external shared lock/pub-sub store.
+# ─────────────────────────────────────────────
+CALL_RING_TIMEOUT_SEC = int(os.getenv("CALL_RING_TIMEOUT_SEC", "45"))
+CALL_DISCONNECT_GRACE_SEC = int(os.getenv("CALL_DISCONNECT_GRACE_SEC", "8"))
+ALLOWED_CALL_PARTICIPANTS = ("Him", "Her")
+call_lock = asyncio.Lock()
+active_call: Optional[dict] = None
+call_disconnect_tasks: Dict[str, asyncio.Task] = {}
 
 # ─────────────────────────────────────────────
 # Activity Pattern Tracking
@@ -1517,6 +1532,416 @@ async def user_leave(username: Optional[str] = None):
     return {"status": "left"}
 
 # ─────────────────────────────────────────────
+# Managed STUN/TURN Credential Endpoint (Short-Lived)
+# ─────────────────────────────────────────────
+
+def _get_configured_stun_servers() -> List[dict]:
+    raw_stun = os.getenv(
+        "STUN_URLS",
+        "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302,stun:stun2.l.google.com:19302"
+    )
+    urls = [u.strip() for u in raw_stun.split(",") if u.strip()]
+    return [{"urls": urls}] if urls else []
+
+def _fetch_turn_ice_servers(username: str) -> tuple[List[dict], int, bool]:
+    """
+    Generate or fetch short-lived TURN credentials using the configured provider.
+    Supported providers via TURN_PROVIDER env var:
+      - 'metered': Metered.ca API (METERED_APP_NAME, METERED_API_KEY)
+      - 'cloudflare': Cloudflare Calls TURN API (CLOUDFLARE_TURN_KEY_ID, CLOUDFLARE_TURN_API_TOKEN)
+      - 'coturn_hmac': Standard Coturn REST/HMAC-SHA1 (TURN_URLS, TURN_SECRET)
+    Falls back to STUN-only if TURN is not configured.
+    """
+    ice_servers = _get_configured_stun_servers()
+    provider = os.getenv("TURN_PROVIDER", "").strip().lower()
+    ttl = int(os.getenv("TURN_TTL_SECONDS", "3600"))
+    turn_configured = False
+
+    if provider == "metered":
+        app_name = os.getenv("METERED_APP_NAME", "").strip()
+        api_key = os.getenv("METERED_API_KEY", "").strip()
+        if app_name and api_key:
+            try:
+                resp = requests.get(
+                    f"https://{app_name}.metered.live/api/v1/turn/credentials",
+                    params={"apiKey": api_key},
+                    timeout=5,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, list) and len(data) > 0:
+                        ice_servers = ice_servers + data
+                        turn_configured = True
+            except Exception as e:
+                print(f"[TURN] Metered credential fetch failed: {e}")
+
+    elif provider == "cloudflare":
+        key_id = os.getenv("CLOUDFLARE_TURN_KEY_ID", "").strip()
+        api_token = os.getenv("CLOUDFLARE_TURN_API_TOKEN", "").strip()
+        if key_id and api_token:
+            try:
+                resp = requests.post(
+                    f"https://rtc.live.cloudflare.com/v1/turn/keys/{key_id}/credentials/generate-ice-servers",
+                    headers={
+                        "Authorization": f"Bearer {api_token}",
+                        "Content-Type": "application/json",
+                    },
+                    json={"ttl": ttl},
+                    timeout=5,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    cf_servers = data.get("iceServers")
+                    if isinstance(cf_servers, list) and len(cf_servers) > 0:
+                        ice_servers = ice_servers + cf_servers
+                        turn_configured = True
+                    elif isinstance(cf_servers, dict):
+                        ice_servers.append(cf_servers)
+                        turn_configured = True
+            except Exception as e:
+                print(f"[TURN] Cloudflare credential fetch failed: {e}")
+
+    elif provider == "coturn_hmac":
+        turn_urls_raw = os.getenv("TURN_URLS", "").strip()
+        turn_secret = os.getenv("TURN_SECRET", "").strip()
+        if turn_urls_raw and turn_secret:
+            urls = [u.strip() for u in turn_urls_raw.split(",") if u.strip()]
+            if urls:
+                expiry = int(time.time()) + ttl
+                turn_user = f"{expiry}:{username}"
+                digest = hmac.new(
+                    turn_secret.encode("utf-8"),
+                    turn_user.encode("utf-8"),
+                    hashlib.sha1,
+                ).digest()
+                turn_cred = base64.b64encode(digest).decode("utf-8")
+                ice_servers.append({
+                    "urls": urls,
+                    "username": turn_user,
+                    "credential": turn_cred,
+                })
+                turn_configured = True
+
+    return ice_servers, ttl, turn_configured
+
+@app.get("/api/turn-credentials")
+async def get_turn_credentials(request: Request):
+    """Return short-lived STUN/TURN ICE server configuration for authenticated Him/Her."""
+    username = normalize_username(get_current_user_from_req(request))
+    if username not in ALLOWED_CALL_PARTICIPANTS:
+        raise HTTPException(status_code=403, detail="Only authorized couple participants may request TURN credentials.")
+
+    ice_servers, ttl, turn_configured = await asyncio.to_thread(_fetch_turn_ice_servers, username)
+    return {
+        "iceServers": ice_servers,
+        "ttl": ttl,
+        "turnConfigured": turn_configured,
+    }
+
+# ─────────────────────────────────────────────
+# Call Signaling State Machine (In-Memory Only)
+# ─────────────────────────────────────────────
+
+def _other_participant(username: str) -> str:
+    return "Her" if username == "Him" else "Him"
+
+async def _send_ws_user(target_user: str, payload: dict):
+    ws = room.connections.get(target_user)
+    if ws:
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            pass
+
+def _cancel_ring_timeout(call_obj: Optional[dict]):
+    if not call_obj:
+        return
+    t = call_obj.get("timeout_task")
+    if t and not t.done():
+        t.cancel()
+    call_obj["timeout_task"] = None
+
+async def _ring_timeout_worker(call_id: str, caller: str, callee: str, call_type: str):
+    global active_call
+    try:
+        await asyncio.sleep(CALL_RING_TIMEOUT_SEC)
+        async with call_lock:
+            if active_call and active_call["call_id"] == call_id and active_call["state"] == "ringing":
+                active_call = None
+                timeout_msg = {
+                    "type": "call_timeout",
+                    "call_id": call_id,
+                    "sender": "system",
+                    "call_type": call_type,
+                    "payload": {"reason": "no_answer"},
+                }
+                await _send_ws_user(caller, {**timeout_msg, "receiver": caller})
+                await _send_ws_user(callee, {**timeout_msg, "receiver": callee})
+    except asyncio.CancelledError:
+        pass
+
+def _cancel_disconnect_cleanup(username: str):
+    task = call_disconnect_tasks.pop(username, None)
+    if task and not task.done():
+        task.cancel()
+
+def _schedule_call_disconnect_cleanup(username: str):
+    _cancel_disconnect_cleanup(username)
+
+    async def _worker():
+        global active_call
+        try:
+            await asyncio.sleep(CALL_DISCONNECT_GRACE_SEC)
+            # If user reconnected, abort cleanup
+            ws = room.connections.get(username)
+            if ws and ws.client_state.name == "CONNECTED":
+                return
+            async with call_lock:
+                if active_call and username in (active_call["caller"], active_call["callee"]):
+                    _cancel_ring_timeout(active_call)
+                    call_id = active_call["call_id"]
+                    call_type = active_call["call_type"]
+                    other = _other_participant(username)
+                    active_call = None
+                    await _send_ws_user(other, {
+                        "type": "call_end",
+                        "call_id": call_id,
+                        "sender": username,
+                        "receiver": other,
+                        "call_type": call_type,
+                        "payload": {"reason": "peer_disconnected"},
+                    })
+        except asyncio.CancelledError:
+            pass
+
+    call_disconnect_tasks[username] = asyncio.create_task(_worker())
+
+CALL_SIGNAL_TYPES = {
+    "call_initiate",
+    "call_ringing",
+    "call_accept",
+    "call_reject",
+    "call_offer",
+    "call_answer",
+    "ice_candidate",
+    "call_end",
+    "call_busy",
+    "call_timeout",
+    "call_media_state",
+    "call_reaction",
+}
+
+async def handle_call_signal(websocket: WebSocket, username: str, data: dict, has_valid_token: bool):
+    global active_call
+    msg_type = data.get("type")
+    call_id = data.get("call_id")
+    call_type = data.get("call_type", "video")
+    payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
+
+    # 1. Verify sender is strictly Him or Her (never trust client-provided sender)
+    if username not in ALLOWED_CALL_PARTICIPANTS:
+        await websocket.send_json({
+            "type": "call_error",
+            "call_id": call_id or "",
+            "sender": "system",
+            "receiver": username,
+            "call_type": call_type,
+            "payload": {"reason": "unauthorized_participant"},
+        })
+        return
+
+    # 2. If token was explicitly provided, it must have validated cleanly
+    if websocket.query_params.get("token") and not has_valid_token:
+        await websocket.send_json({
+            "type": "call_error",
+            "call_id": call_id or "",
+            "sender": "system",
+            "receiver": username,
+            "call_type": call_type,
+            "payload": {"reason": "invalid_session_token"},
+        })
+        return
+
+    # 3. Validate call_id and call_type
+    if not call_id or not isinstance(call_id, str) or len(call_id) > 128:
+        await websocket.send_json({
+            "type": "call_error",
+            "call_id": "",
+            "sender": "system",
+            "receiver": username,
+            "call_type": call_type,
+            "payload": {"reason": "missing_call_id"},
+        })
+        return
+
+    if call_type not in ("audio", "video"):
+        await websocket.send_json({
+            "type": "call_error",
+            "call_id": call_id,
+            "sender": "system",
+            "receiver": username,
+            "call_type": "video",
+            "payload": {"reason": "invalid_call_type"},
+        })
+        return
+
+    receiver = _other_participant(username)
+    requested_receiver = data.get("receiver")
+    if requested_receiver and normalize_username(requested_receiver) != receiver:
+        await websocket.send_json({
+            "type": "call_error",
+            "call_id": call_id,
+            "sender": "system",
+            "receiver": username,
+            "call_type": call_type,
+            "payload": {"reason": "invalid_receiver"},
+        })
+        return
+
+    envelope = {
+        "type": msg_type,
+        "call_id": call_id,
+        "sender": username,
+        "receiver": receiver,
+        "call_type": call_type,
+        "payload": payload,
+    }
+
+    async with call_lock:
+        if msg_type == "call_initiate":
+            if active_call is not None:
+                if active_call["call_id"] == call_id:
+                    return  # Idempotent duplicate
+                if active_call["caller"] == username:
+                    await websocket.send_json({
+                        "type": "call_error",
+                        "call_id": call_id,
+                        "sender": "system",
+                        "receiver": username,
+                        "call_type": call_type,
+                        "payload": {"reason": "call_already_in_progress"},
+                    })
+                else:
+                    await websocket.send_json({
+                        "type": "call_busy",
+                        "call_id": call_id,
+                        "sender": receiver,
+                        "receiver": username,
+                        "call_type": call_type,
+                        "payload": {"reason": "partner_busy"},
+                    })
+                return
+
+            partner_ws = room.connections.get(receiver)
+            if not partner_ws or partner_ws.client_state.name != "CONNECTED":
+                await websocket.send_json({
+                    "type": "call_unavailable",
+                    "call_id": call_id,
+                    "sender": "system",
+                    "receiver": username,
+                    "call_type": call_type,
+                    "payload": {"reason": "partner_offline"},
+                })
+                return
+
+            active_call = {
+                "call_id": call_id,
+                "caller": username,
+                "callee": receiver,
+                "call_type": call_type,
+                "state": "ringing",
+                "created_at": time.time(),
+                "timeout_task": asyncio.create_task(
+                    _ring_timeout_worker(call_id, username, receiver, call_type)
+                ),
+            }
+            await _send_ws_user(receiver, envelope)
+            return
+
+        # All other events require an active call with matching call_id
+        if not active_call or active_call["call_id"] != call_id:
+            if msg_type == "call_end":
+                return  # Idempotent end on already-terminated call
+            await websocket.send_json({
+                "type": "call_error",
+                "call_id": call_id,
+                "sender": "system",
+                "receiver": username,
+                "call_type": call_type,
+                "payload": {"reason": "invalid_or_ended_call"},
+            })
+            return
+
+        if msg_type == "call_ringing":
+            if username != active_call["callee"] or active_call["state"] != "ringing":
+                return
+            await _send_ws_user(receiver, envelope)
+            return
+
+        if msg_type == "call_accept":
+            if username != active_call["callee"] or active_call["state"] != "ringing":
+                await websocket.send_json({
+                    "type": "call_error",
+                    "call_id": call_id,
+                    "sender": "system",
+                    "receiver": username,
+                    "call_type": call_type,
+                    "payload": {"reason": "duplicate_or_invalid_accept"},
+                })
+                return
+            active_call["state"] = "accepted"
+            _cancel_ring_timeout(active_call)
+            await _send_ws_user(receiver, envelope)
+            return
+
+        if msg_type in ("call_reject", "call_busy"):
+            if username != active_call["callee"] or active_call["state"] != "ringing":
+                return
+            _cancel_ring_timeout(active_call)
+            active_call = None
+            await _send_ws_user(receiver, envelope)
+            return
+
+        if msg_type == "call_timeout":
+            if active_call["state"] != "ringing":
+                return
+            _cancel_ring_timeout(active_call)
+            active_call = None
+            await _send_ws_user(receiver, envelope)
+            return
+
+        if msg_type == "call_offer":
+            if active_call["state"] not in ("accepted", "connected", "ringing"):
+                return
+            await _send_ws_user(receiver, envelope)
+            return
+
+        if msg_type == "call_answer":
+            if active_call["state"] not in ("accepted", "connected"):
+                return
+            active_call["state"] = "connected"
+            await _send_ws_user(receiver, envelope)
+            return
+
+        if msg_type == "ice_candidate":
+            if active_call["state"] not in ("ringing", "accepted", "connected"):
+                return
+            await _send_ws_user(receiver, envelope)
+            return
+
+        if msg_type == "call_end":
+            _cancel_ring_timeout(active_call)
+            active_call = None
+            await _send_ws_user(receiver, envelope)
+            return
+
+        if msg_type in ("call_media_state", "call_reaction"):
+            if active_call["state"] not in ("accepted", "connected"):
+                return
+            await _send_ws_user(receiver, envelope)
+            return
+
+# ─────────────────────────────────────────────
 # WebSocket Endpoint with Auth & State Sync
 # ─────────────────────────────────────────────
 
@@ -1527,7 +1952,8 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
 
     # Verify session or token if provided
     token = websocket.query_params.get("token")
-    if token and token in active_sessions:
+    has_valid_token = bool(token and token in active_sessions)
+    if has_valid_token:
         username = normalize_username(active_sessions[token]["username"])
         user_lower = username.lower()
 
@@ -1552,6 +1978,7 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
         return
 
     await websocket.accept()
+    _cancel_disconnect_cleanup(username)
     room.connections[username] = websocket
     room.touch(username)
 
@@ -1640,6 +2067,11 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                 await clear_messages()
                 continue
 
+            elif msg_type in CALL_SIGNAL_TYPES:
+                room.touch(username)
+                await handle_call_signal(websocket, username, data, has_valid_token)
+                continue
+
             # Standard chat / photo / audio message - reject any other types or empty messages
             if msg_type not in ("chat", "image", "audio"):
                 continue
@@ -1719,6 +2151,7 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
         last_seen_ts = time.time()
         room.last_seen_history[username] = last_seen_ts
         room.release(username, websocket)
+        _schedule_call_disconnect_cleanup(username)
         await room.broadcast({
             "type": "partner_offline",
             "username": username,
@@ -1730,6 +2163,7 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
         last_seen_ts = time.time()
         room.last_seen_history[username] = last_seen_ts
         room.release(username, websocket)
+        _schedule_call_disconnect_cleanup(username)
         await room.broadcast({
             "type": "partner_offline",
             "username": username,
