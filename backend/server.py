@@ -347,6 +347,7 @@ class PrivateRoom:
     def __init__(self):
         self.connections: Dict[str, WebSocket] = {}   # username -> ws
         self.active_users: Dict[str, float] = {}       # username -> last_seen
+        self.last_seen_history: Dict[str, float] = {} # username -> last seen timestamp (persists after offline)
         self.pin = PRIVATE_PIN
 
     def get_online_users(self) -> List[str]:
@@ -375,12 +376,16 @@ class PrivateRoom:
     def touch(self, username: str):
         if username and str(username).strip():
             u_norm = normalize_username(username)
-            self.active_users[u_norm] = time.time()
+            now = time.time()
+            self.active_users[u_norm] = now
+            self.last_seen_history[u_norm] = now
 
     def release(self, username: str, ws: Optional[WebSocket] = None):
         if not username:
             return
         u_norm = normalize_username(username)
+        # Record last seen before releasing
+        self.last_seen_history[u_norm] = time.time()
         # CRITICAL: Only pop if the registered ws matches the disconnecting ws
         # Prevents race condition where closing old socket removes the new active socket
         if ws is None or self.connections.get(u_norm) == ws:
@@ -1383,6 +1388,16 @@ async def get_users(username: Optional[str] = None):
         room.touch(username)
     return {"users": room.get_online_users()}
 
+@app.get("/api/last-seen")
+async def get_last_seen(username: Optional[str] = None):
+    """Return last-seen timestamps for all users (or just the partner of the requesting user)."""
+    if username:
+        room.touch(username)
+    result = {}
+    for u, ts in room.last_seen_history.items():
+        result[u] = ts  # Unix epoch seconds (float)
+    return {"last_seen": result}
+
 @app.post("/api/leave")
 @app.get("/api/leave")
 async def user_leave(username: Optional[str] = None):
@@ -1596,18 +1611,24 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
                 await publish_event("message.created", username, chat_item, event_id=f"ev_msg_{chat_item['id']}")
 
     except WebSocketDisconnect:
+        last_seen_ts = time.time()
+        room.last_seen_history[username] = last_seen_ts
         room.release(username, websocket)
         await room.broadcast({
             "type": "partner_offline",
-            "username": username
+            "username": username,
+            "last_seen_ts": last_seen_ts
         }, exclude=username)
         await room.broadcast_users()
     except Exception as e:
         print(f"[WS Error] Exception with user {username}: {e}")
+        last_seen_ts = time.time()
+        room.last_seen_history[username] = last_seen_ts
         room.release(username, websocket)
         await room.broadcast({
             "type": "partner_offline",
-            "username": username
+            "username": username,
+            "last_seen_ts": last_seen_ts
         }, exclude=username)
         await room.broadcast_users()
 
