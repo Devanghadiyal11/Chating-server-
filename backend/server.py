@@ -63,6 +63,7 @@ COL_CONF  = "settings"
 COL_SESS  = "sessions"
 COL_EVNT  = "events"
 COL_IMGS  = "images"
+COL_ACTV  = "activity_patterns"
 
 # ─────────────────────────────────────────────
 # State & Caches
@@ -75,6 +76,7 @@ images_col = None
 settings_col = None
 sessions_col = None
 events_col = None
+activity_col = None  # activity_patterns collection
 
 # Active session tokens: token -> {"username": str, "created_at": float}
 active_sessions: Dict[str, dict] = {}
@@ -105,6 +107,73 @@ memory_messages: List[dict] = []
 memory_events: List[dict] = []
 memory_images: List[dict] = []
 recent_msg_ids: set = set()
+
+# ─────────────────────────────────────────────
+# Activity Pattern Tracking
+# ─────────────────────────────────────────────
+
+# Per-user hourly activity counts: {username -> {hour(0-23) -> count}}
+activity_hour_counts: Dict[str, Dict[int, int]] = {}
+# Touch tally for batched DB writes (flush every 15 touches per user)
+_activity_touch_tally: Dict[str, int] = {}
+ACTIVITY_FLUSH_EVERY = 15
+
+# Time-period definitions (hour ranges, label, emoji)
+ACTIVITY_PERIODS = [
+    ("morning",   list(range(5, 12)),              "Usually active in the morning", "🌅"),
+    ("afternoon", list(range(12, 17)),             "Usually active in the afternoon", "☀️"),
+    ("evening",   list(range(17, 21)),             "Usually active in the evening", "🌆"),
+    ("night",     list(range(21, 24)) + list(range(0, 5)), "Usually active at night", "🌙"),
+]
+
+def record_activity_hour(username: str):
+    """Increment the in-memory hourly bucket for the current wall-clock hour."""
+    hour = datetime.now().hour
+    if username not in activity_hour_counts:
+        activity_hour_counts[username] = {}
+    activity_hour_counts[username][hour] = activity_hour_counts[username].get(hour, 0) + 1
+    _activity_touch_tally[username] = _activity_touch_tally.get(username, 0) + 1
+
+def get_activity_pattern(username: str) -> Optional[dict]:
+    """
+    Analyse hourly counts and return the dominant period.
+    Returns None if there is not yet enough data (< 20 total touches).
+    """
+    counts = activity_hour_counts.get(username, {})
+    total = sum(counts.values())
+    if total < 20:
+        return None  # Not enough data yet
+
+    period_scores: Dict[str, int] = {}
+    for name, hours, label, emoji in ACTIVITY_PERIODS:
+        period_scores[name] = sum(counts.get(h, 0) for h in hours)
+
+    peak_name = max(period_scores, key=lambda k: period_scores[k])
+    # Only surface if the peak period holds at least 30% of all activity
+    if period_scores[peak_name] < total * 0.30:
+        return None
+
+    for name, hours, label, emoji in ACTIVITY_PERIODS:
+        if name == peak_name:
+            return {"pattern": peak_name, "label": label, "emoji": emoji, "total_samples": total}
+    return None
+
+async def flush_activity_to_db(username: str):
+    """Persist the in-memory hourly counts to MongoDB (upsert by username)."""
+    if activity_col is None:
+        return
+    counts = activity_hour_counts.get(username, {})
+    if not counts:
+        return
+    try:
+        inc_ops = {f"hours.{h}": v for h, v in counts.items()}
+        await activity_col.update_one(
+            {"_id": username},
+            {"$inc": inc_ops, "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True
+        )
+    except Exception as e:
+        print(f"[Activity] DB flush error for {username}: {e}")
 
 # ─────────────────────────────────────────────
 # Network Photo Encryption / Storage Decryption
@@ -212,7 +281,7 @@ async def keep_alive_ping():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global mongo_client, db, messages_col, images_col, settings_col, sessions_col, events_col
+    global mongo_client, db, messages_col, images_col, settings_col, sessions_col, events_col, activity_col
     try:
         mongo_client = motor.motor_asyncio.AsyncIOMotorClient(
             MONGO_URI,
@@ -224,6 +293,7 @@ async def lifespan(app: FastAPI):
         settings_col = db[COL_CONF]
         sessions_col = db[COL_SESS]
         events_col = db[COL_EVNT]
+        activity_col = db[COL_ACTV]
 
         # Safely create indexes without failing if they already exist
         for idx in ["time_ms", "id", "seq", [("time_ms", 1), ("seq", 1)]]:
@@ -304,6 +374,17 @@ async def lifespan(app: FastAPI):
         # Load sessions from DB
         async for s in sessions_col.find({}):
             active_sessions[s["token"]] = {"username": s["username"], "created_at": s.get("created_at", time.time())}
+
+        # Load persisted activity patterns from MongoDB into memory
+        try:
+            async for doc in activity_col.find({}):
+                uname = doc.get("_id")
+                hours_raw = doc.get("hours", {})
+                if uname and hours_raw:
+                    activity_hour_counts[uname] = {int(h): int(v) for h, v in hours_raw.items()}
+            print(f"[Activity] Loaded patterns for: {list(activity_hour_counts.keys())}")
+        except Exception as e:
+            print(f"[Activity] Could not load patterns: {e}")
     except Exception as e:
         print(f"[DB Warning] Could not connect to MongoDB Atlas: {e}. Running with memory fallback.")
 
@@ -379,6 +460,11 @@ class PrivateRoom:
             now = time.time()
             self.active_users[u_norm] = now
             self.last_seen_history[u_norm] = now
+            # Record activity hour for pattern tracking
+            record_activity_hour(u_norm)
+            # Flush to DB every ACTIVITY_FLUSH_EVERY touches
+            if _activity_touch_tally.get(u_norm, 0) % ACTIVITY_FLUSH_EVERY == 0:
+                asyncio.ensure_future(flush_activity_to_db(u_norm))
 
     def release(self, username: str, ws: Optional[WebSocket] = None):
         if not username:
@@ -1397,6 +1483,25 @@ async def get_last_seen(username: Optional[str] = None):
     for u, ts in room.last_seen_history.items():
         result[u] = ts  # Unix epoch seconds (float)
     return {"last_seen": result}
+
+@app.get("/api/activity-pattern")
+async def get_activity_pattern_endpoint(username: Optional[str] = None):
+    """
+    Return the dominant activity time-period for a given user.
+    If username is omitted, returns patterns for all tracked users.
+    Response: { "Him": {"pattern": "night", "label": "Usually active at night", "emoji": "🌙", "total_samples": 42}, ... }
+    """
+    if username:
+        u_norm = normalize_username(username)
+        pattern = get_activity_pattern(u_norm)
+        return {"patterns": {u_norm: pattern} if pattern else {}}
+
+    all_patterns = {}
+    for u in list(activity_hour_counts.keys()):
+        p = get_activity_pattern(u)
+        if p:
+            all_patterns[u] = p
+    return {"patterns": all_patterns}
 
 @app.post("/api/leave")
 @app.get("/api/leave")
