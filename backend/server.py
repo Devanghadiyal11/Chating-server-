@@ -1809,10 +1809,20 @@ async def handle_call_signal(websocket: WebSocket, username: str, data: dict, ha
 
     async with call_lock:
         if msg_type == "call_initiate":
+            # Auto-clear stale ringing call if it exceeded timeout
+            if active_call is not None and active_call["state"] == "ringing":
+                if time.time() - active_call.get("created_at", 0) > CALL_RING_TIMEOUT_SEC:
+                    _cancel_ring_timeout(active_call)
+                    active_call = None
+
             if active_call is not None:
                 if active_call["call_id"] == call_id:
                     return  # Idempotent duplicate
-                if active_call["caller"] == username:
+                if active_call["caller"] == username and active_call["state"] == "ringing":
+                    # Replace previous unanswered ringing attempt from the same caller
+                    _cancel_ring_timeout(active_call)
+                    active_call = None
+                elif active_call["caller"] == username:
                     await websocket.send_json({
                         "type": "call_error",
                         "call_id": call_id,
@@ -1821,6 +1831,7 @@ async def handle_call_signal(websocket: WebSocket, username: str, data: dict, ha
                         "call_type": call_type,
                         "payload": {"reason": "call_already_in_progress"},
                     })
+                    return
                 else:
                     await websocket.send_json({
                         "type": "call_busy",
@@ -1830,7 +1841,7 @@ async def handle_call_signal(websocket: WebSocket, username: str, data: dict, ha
                         "call_type": call_type,
                         "payload": {"reason": "partner_busy"},
                     })
-                return
+                    return
 
             partner_ws = room.connections.get(receiver)
             if not partner_ws or partner_ws.client_state.name != "CONNECTED":
@@ -1952,6 +1963,16 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
 
     # Verify session or token if provided
     token = websocket.query_params.get("token")
+    if token and token not in active_sessions and sessions_col is not None:
+        try:
+            db_sess = await sessions_col.find_one({"token": token})
+            if db_sess and db_sess.get("username"):
+                active_sessions[token] = {
+                    "username": db_sess["username"],
+                    "created_at": db_sess.get("created_at", time.time()),
+                }
+        except Exception:
+            pass
     has_valid_token = bool(token and token in active_sessions)
     if has_valid_token:
         username = normalize_username(active_sessions[token]["username"])
