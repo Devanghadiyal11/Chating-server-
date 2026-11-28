@@ -1895,7 +1895,7 @@ async def handle_call_signal(websocket: WebSocket, username: str, data: dict, ha
             return
 
         if msg_type in ("call_reject", "call_busy"):
-            if username != active_call["callee"] or active_call["state"] != "ringing":
+            if username != active_call["callee"] or active_call["state"] not in ("ringing", "accepted"):
                 return
             _cancel_ring_timeout(active_call)
             active_call = None
